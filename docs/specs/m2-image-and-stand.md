@@ -1,0 +1,162 @@
+# Веха M2 — Docker-образ и интеграционный стенд с Pebble
+
+Продолжение вехи M1 (патч `patches/0001-csr-subject.patch` в `main`, `8898c9b`).
+Задача: собрать образ пропатченного Traefik и ДОКАЗАТЬ на живом стенде, что
+`csrSubject` доезжает до реального сертификата — и при выпуске, и при продлении.
+
+Эта спека лежит в клоне как `docs/specs/m2-image-and-stand.md` и приехала УЖЕ
+закоммиченной — отдельно её коммитить не надо.
+
+## Где работать
+
+- Клон: `/home/deploy/exec-clones/traefik-nuc-m2` (твой). Живое дерево
+  `/home/deploy/github/traefik-nuc-acme` и другие клоны в `~/exec-clones/` НЕ ТРОГАТЬ.
+- Новая ветка от `main`: `m2-image-and-stand`.
+- Уже лежит в клоне, качать не нужно: `.upstream/traefik-v3.7.13.tar.gz`
+  (sha256 `c1cff59261740def3a393ea2c4d7c7d0184eb8eb39c88402b26eb3b3e4735b96`),
+  кэши `.gomodcache/` и `.gocache/`. Всё под `.gitignore`.
+
+## Среда: у тебя ЕСТЬ Docker, сеть и слушающие сокеты
+
+Проверено пробой в этой же панели 2026-09-06 22:02 UTC, файл `env-probe.txt`
+в корне клона, все команды rc=0: `docker info` → `29.8.0 overlayfs`;
+`docker image inspect` по дайджесту → образ виден; `docker run -d -p 24000:14000`
++ `curl -ks https://localhost:24000/dir` → ACME-директория; `curl
+https://proxy.golang.org/` → 200; `socket.bind(...); listen()` → ok.
+
+Docker-демон общий с хозяином, поэтому образ Pebble уже вытянут и `docker pull`
+для него не нужен. Не сокращай критерии «из-за песочницы» — её нет.
+
+Работай своим юзером (`id -u` = 1002, `id -g` = 1002), не под root. Контейнеры,
+пишущие в смонтированные каталоги, запускай с `user: "1002:1002"`, иначе файлы
+достанутся root и хозяин потеряет к ним доступ.
+
+## Проверенные факты, на которых стоит веха
+
+Каждый измерен до написания спеки. Не перепроверяй их заново, но если факт
+разойдётся с реальностью — остановись и доложи, это важнее вехи.
+
+| Факт | Чем измерено |
+|---|---|
+| У образа Pebble НЕТ версионных тегов — только `latest` и `sha-<commit>`. Пин `:v2.10.1` даст `manifest unknown`. Пинить ДАЙДЖЕСТОМ. | обход каталога тегов GHCR, 31 тег |
+| Дайджест: `ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199`, платформы linux/amd64 + linux/arm64 | `ghcr.io/v2/.../manifests/latest` |
+| **Валидация challenge ходит на 5002 (HTTP-01) и 5001 (TLS-ALPN), НЕ на 80/443.** Это `httpPort`/`tlsPort` из конфига, с которым собран образ. | `test/config/pebble-config.json` в репо Pebble |
+| **Корневой CA генерируется ЗАНОВО при каждом старте** контейнера. Вшить его в образ нельзя — стенд обязан забирать его в рантайме с `https://<pebble>:15000/roots/0`. | логи запуска: «Generated new root issuer CN=Pebble Root CA 45fc6c» |
+| Pebble НАМЕРЕННО отбраковывает 5% нонсов и спит перед валидацией. Без `PEBBLE_WFE_NONCEREJECT=0` и `PEBBLE_VA_NOSLEEP=1` стенд будет случайно краснеть, и это спишут на наш код. | логи: «Configured to reject 5% of good nonces»; `wfe/wfe.go`, `va/va.go` |
+| Бинарь Traefik собирается ОФЛАЙН без Node и без веб-интерфейса: `//go:embed static` доволен каталогом-заглушкой `webui/static/DONT-EDIT-FILES-IN-THIS-DIRECTORY.md`. | `upstream-go.sh build ./cmd/traefik` с `GOPROXY=off` → бинарь 243 МБ |
+| Продление можно вызвать НЕМЕДЛЕННО: при `certificatesDuration >= 8760` (год) период продления — 4 месяца, а сертификат Pebble живёт 90 дней, поэтому `renewCertificates` на старте видит его просроченным и продлевает сразу. | `getCertificateRenewDurations`, `provider.go:828` |
+
+## Что сделать
+
+### 1. `Dockerfile` — многостадийная сборка
+
+- Стадия сборки: `golang:1.27-alpine` (пин тегом И дайджестом — дайджест возьми
+  сам при сборке и впиши). Распаковать `.upstream/traefik-v3.7.13.tar.gz`,
+  наложить `patches/0001-csr-subject.patch`, собрать `./cmd/traefik`.
+  Веб-интерфейс НЕ собирать: Node и yarn в сборку не тащим — **это осознанное
+  решение владельца**, образ идёт без дашборда.
+- Бинарь собирать с `-ldflags="-s -w"` (иначе 243 МБ) и с версией в
+  `github.com/traefik/traefik/v3/pkg/version.Version`.
+- Финальная стадия: `alpine:3.24` (пин тегом и дайджестом), `ca-certificates`,
+  `tzdata`, копия бинаря, `EXPOSE 80`, `ENTRYPOINT ["/traefik"]` — как в
+  официальном Dockerfile апстрима.
+- Тег образа: `traefik-nuc-acme:3.7.13-nuc.1`. **Голый `3.7.13` не использовать
+  никогда** — образ не должен путаться с официальным Traefik.
+
+### 2. `docker/compose.yaml` — стенд
+
+Сервисы: `pebble` (по дайджесту) и `traefik` (собранный образ). Требования:
+
+- Pebble с `PEBBLE_WFE_NONCEREJECT=0` и `PEBBLE_VA_NOSLEEP=1`.
+- Тестовый домен обязан РЕЗОЛВИТЬСЯ у Pebble в контейнер Traefik: повесь на
+  сервис `traefik` сетевой алиас с этим именем, тогда встроенный DNS Docker
+  отдаст Pebble нужный адрес. Своего DNS-сервера не поднимай.
+- Traefik слушает entryPoint для HTTP-01 на **5002** — именно туда Pebble пойдёт
+  проверять. Резолвер: `caServer` на `https://pebble:14000/dir`, `httpChallenge`,
+  `csrSubject.country=RU` плюс ещё хотя бы одно поле Subject.
+- Traefik обязан ДОВЕРЯТЬ корню Pebble. Корень новый на каждый старт, поэтому
+  забирай его в рантайме с `https://pebble:15000/roots/0` и клади в доверенные
+  (`caSystemCertPool`/`caCertificates`, смонтированный файл — выбери сам,
+  но сделай это ДАННЫМИ, а не пересборкой образа).
+- `acme.json` — на смонтированном томе, владелец `1002:1002`, права 600.
+
+### 3. `scripts/stand.sh` — управление стендом
+
+Подкоманды `up`, `wait`, `dump-cert`, `down`. `wait` ждёт появления сертификата
+в `acme.json` с таймаутом и НЕНУЛЕВЫМ кодом возврата по таймауту (молчаливое
+зависание хуже падения). `dump-cert` печатает сертификат в PEM на stdout.
+**Ждать по маркеру/файлу, а не опросом процессов по имени.**
+
+### 4. `scripts/release.sh` — написать, НО НЕ ВЫПОЛНЯТЬ пуш
+
+Multi-arch сборка (`linux/amd64`, `linux/arm64`) и теги вида
+`<traefik-версия>-nuc.<ревизия>`. **Пуш в GHCR запрещён в этой вехе** —
+публикация наружу решается владельцем отдельно. Скрипт обязан поддерживать
+`--dry-run` и по умолчанию НИЧЕГО не пушить; без явного флага пуша он должен
+только печатать, что бы сделал. Токенов и кред в скрипт не зашивать.
+
+### 5. Документация
+
+- `CHANGELOG.md` — запись за 2026-09-06 про образ и стенд.
+- В `README.md` добавить короткий раздел про образ и **прямо написать, что он
+  идёт БЕЗ веб-дашборда** (`api.dashboard` работать не будет) — это осознанный
+  размен ради офлайн-сборки без Node.
+
+## Не трогать
+
+- `patches/0001-csr-subject.patch`, `scripts/mutation_gate_m1.py`,
+  `docs/specs/`, `docs/reviews/`, `TASKS.md`, `CLAUDE.md`, `LICENSE`,
+  `upstream.lock`, `scripts/upstream-go.sh`, `.gitignore`.
+- `.github/` не создавать НИ В КАКОМ ВИДЕ — минуты GitHub Actions у владельца
+  исчерпаны до 2026-10-06. Ни workflow, ни отключённого, ни `dependabot.yml`.
+- Реальный пуш в любой registry. Логин в GHCR не выполнять.
+- `.gomodcache/`, `.gocache/`, тарбол апстрима.
+
+## Критерии приёмки
+
+- **AC-001** — образ собирается:
+  `bash -c 'docker build -t traefik-nuc-acme:3.7.13-nuc.1 -f Dockerfile . && docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Id}}"'`
+- **AC-002** — в образе именно НАША сборка: неверная страна валит старт с внятной ошибкой:
+  `bash -c 'docker run --rm traefik-nuc-acme:3.7.13-nuc.1 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --entrypoints.web.address=:80 2>&1 | grep -qi country'`
+- **AC-003** — бинарь ужат (не 243 МБ):
+  `bash -c 'test "$(docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Size}}")" -lt 150000000'`
+- **AC-004** — стенд поднимается и Pebble отвечает:
+  `bash -c 'scripts/stand.sh up && scripts/stand.sh wait'`
+- **AC-005** — 🚩 ГЛАВНОЕ: выпущенный Pebble сертификат несёт `C=RU`:
+  `bash -c 'scripts/stand.sh dump-cert | openssl x509 -noout -subject | grep -q "C = RU\|C=RU"'`
+- **AC-006** — в сертификате есть тестовый домен (HTTP-01 реально прошёл, а не подсунут самоподписанный):
+  `bash -c 'scripts/stand.sh dump-cert | openssl x509 -noout -text | grep -A1 "Subject Alternative Name" | grep -q DNS'`
+- **AC-007** — 🚩 ПРОДЛЕНИЕ сохраняет Subject: после перезапуска с
+  `certificatesDuration=8760` сертификат ПЕРЕВЫПУСКАЕТСЯ (другой serial) и снова несёт `C=RU`:
+  `bash -c 'scripts/stand.sh renew-check'`
+  (подкоманду напиши сам: снять serial до, перезапустить с большим
+  `certificatesDuration`, дождаться нового сертификата, сверить, что serial
+  ИЗМЕНИЛСЯ и `C=RU` на месте; таймаут с ненулевым кодом обязателен)
+- **AC-008** — стенд гасится без остатков:
+  `bash -c 'scripts/stand.sh down && test -z "$(docker ps -aq --filter name=traefik-nuc)"'`
+- **AC-009** — релизный скрипт НИЧЕГО не пушит по умолчанию:
+  `bash -c 'scripts/release.sh --dry-run 2>&1 | grep -qiE "dry|would" && ! grep -qE "docker (push|login)" <(scripts/release.sh --dry-run 2>&1)'`
+- **AC-010** — дерево репозитория чистое:
+  `bash -c 'test -z "$(git status --porcelain -- . ":(exclude)report.json" ":(exclude)report-blocked.md" ":(exclude)env-probe.txt")"'`
+- **AC-011** — нет ни одного файла GitHub Actions:
+  `bash -c 'test -z "$(git ls-files -- ".github")" && test ! -d .github'`
+
+## Контракт отчёта
+
+Положи в корень клона `report.json`:
+
+```json
+{"criteria": [{"id": "AC-001", "status": "pass|fail|blocked",
+               "command": "<команда-доказательство>", "rc": 0, "note": "…"}]}
+```
+
+Ровно одиннадцать записей. У AC-005 и AC-007 в `note` приведи ДОСЛОВНУЮ строку
+Subject из сертификата — это предмет вехи, и он должен быть виден в отчёте.
+
+## Контракт на невыполнимое
+
+Если требование несовместимо с реальностью — остановись и доложи в
+`report-blocked.md`: что не сходится, какой командой это видно, какие варианты
+видишь. Обходить несовместимость запрещено: не глушить код возврата, не
+отключать проверки, не заменять живой стенд заглушкой, не пушить в registry,
+не создавать `.github/`. Честная остановка стоит дешевле правдоподобного отчёта.

@@ -166,7 +166,9 @@ CSRSubject *CSRSubject `description:"Subject fields to put into the CSR." json:"
 ## Не трогать
 
 - `README.md`, `LICENSE`, `TASKS.md`, `CLAUDE.md`, `upstream.lock`,
-  `scripts/upstream-go.sh`, `.gitignore`, эту спеку.
+  `scripts/upstream-go.sh`, `.gitignore`, саму эту спеку
+  `docs/specs/m1-csr-subject.md` — она приехала в клон УЖЕ закоммиченной в
+  `main`, поэтому коммитить её отдельно не надо и дерево от неё не грязнится.
 - `.upstream/traefik/` вне `pkg/provider/acme/` — никаких «заодно» правок
   апстрима: чем шире патч, тем дороже его переносить на следующий Traefik.
 - `.gomodcache/`, `.gocache/`, `.upstream/traefik-v3.7.13.tar.gz`.

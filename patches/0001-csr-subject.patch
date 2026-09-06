@@ -1,0 +1,514 @@
+diff --git a/pkg/provider/acme/csr.go b/pkg/provider/acme/csr.go
+new file mode 100644
+index 0000000..f55b37a
+--- /dev/null
++++ b/pkg/provider/acme/csr.go
+@@ -0,0 +1,160 @@
++package acme
++
++import (
++	"context"
++	"crypto"
++	"crypto/rand"
++	"crypto/x509"
++	"errors"
++	"fmt"
++	"unicode/utf8"
++
++	"github.com/go-acme/lego/v5/certcrypto"
++	"github.com/go-acme/lego/v5/certificate"
++)
++
++// CSRSubject contains optional subject fields for certificate requests.
++type CSRSubject struct {
++	Country            string `description:"Two-letter country code for the CSR subject." json:"country,omitempty" toml:"country,omitempty" yaml:"country,omitempty" export:"true"`
++	Organization       string `description:"Organization for the CSR subject." json:"organization,omitempty" toml:"organization,omitempty" yaml:"organization,omitempty" export:"true"`
++	OrganizationalUnit string `description:"Organizational unit for the CSR subject." json:"organizationalUnit,omitempty" toml:"organizationalUnit,omitempty" yaml:"organizationalUnit,omitempty" export:"true"`
++	Locality           string `description:"Locality for the CSR subject." json:"locality,omitempty" toml:"locality,omitempty" yaml:"locality,omitempty" export:"true"`
++}
++
++// IsEmpty reports whether the stock certificate request path should be used.
++func (s *CSRSubject) IsEmpty() bool {
++	return s == nil || (s.Country == "" && s.Organization == "" && s.OrganizationalUnit == "" && s.Locality == "")
++}
++
++// Validate checks the X.520 subject field length limits.
++func (s *CSRSubject) Validate() error {
++	if s == nil {
++		return nil
++	}
++
++	if s.Country != "" {
++		if len(s.Country) != 2 {
++			return errors.New("CSR subject country must contain exactly two ASCII letters")
++		}
++		for _, c := range s.Country {
++			if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
++				return errors.New("CSR subject country must contain exactly two ASCII letters")
++			}
++		}
++	}
++
++	for _, field := range []struct{ name, value string }{
++		{"organization", s.Organization},
++		{"organizationalUnit", s.OrganizationalUnit},
++		{"locality", s.Locality},
++	} {
++		if utf8.RuneCountInString(field.value) > 64 {
++			return fmt.Errorf("CSR subject %s must not exceed 64 characters", field.name)
++		}
++	}
++	return nil
++}
++
++func buildCSR(subject *CSRSubject, domains, emails []string, key crypto.Signer, enableCommonName bool) (*x509.CertificateRequest, error) {
++	if err := subject.Validate(); err != nil {
++		return nil, err
++	}
++	if len(domains) == 0 {
++		return nil, errors.New("cannot build CSR without domains")
++	}
++	if key == nil {
++		return nil, errors.New("cannot build CSR without a private key")
++	}
++
++	template := &x509.CertificateRequest{
++		DNSNames:       domains,
++		EmailAddresses: emails,
++	}
++	if enableCommonName {
++		template.Subject.CommonName = domains[0]
++	}
++	if subject != nil {
++		if subject.Country != "" {
++			template.Subject.Country = []string{subject.Country}
++		}
++		if subject.Organization != "" {
++			template.Subject.Organization = []string{subject.Organization}
++		}
++		if subject.OrganizationalUnit != "" {
++			template.Subject.OrganizationalUnit = []string{subject.OrganizationalUnit}
++		}
++		if subject.Locality != "" {
++			template.Subject.Locality = []string{subject.Locality}
++		}
++	}
++
++	der, err := x509.CreateCertificateRequest(rand.Reader, template, key)
++	if err != nil {
++		return nil, fmt.Errorf("creating CSR: %w", err)
++	}
++	csr, err := x509.ParseCertificateRequest(der)
++	if err != nil {
++		return nil, fmt.Errorf("parsing CSR: %w", err)
++	}
++	return csr, nil
++}
++
++func (p *Provider) obtainForCSRRequest(domains []string) (certificate.ObtainForCSRRequest, crypto.Signer, error) {
++	if err := p.CSRSubject.Validate(); err != nil {
++		return certificate.ObtainForCSRRequest{}, nil, err
++	}
++	key, err := certcrypto.GeneratePrivateKey(GetKeyType(context.Background(), p.KeyType))
++	if err != nil {
++		return certificate.ObtainForCSRRequest{}, nil, fmt.Errorf("generating CSR private key: %w", err)
++	}
++	request, err := p.csrRequest(domains, key)
++	return request, key, err
++}
++
++func (p *Provider) csrRequest(domains []string, key crypto.Signer) (certificate.ObtainForCSRRequest, error) {
++	csr, err := buildCSR(p.CSRSubject, domains, p.EmailAddresses, key, !p.DisableCommonName)
++	if err != nil {
++		return certificate.ObtainForCSRRequest{}, err
++	}
++	return certificate.ObtainForCSRRequest{
++		CSR:              csr,
++		PrivateKey:       key,
++		Bundle:           true,
++		PreferredChain:   p.PreferredChain,
++		EnableCommonName: !p.DisableCommonName,
++		Profile:          p.Profile,
++	}, nil
++}
++
++// renewalForCSRRequest prepares a renewal without contacting the CA or modifying
++// stored state. A nil request selects lego's stock Renew path.
++func (p *Provider) renewalForCSRRequest(res certificate.Resource) (*certificate.ObtainForCSRRequest, error) {
++	if p.CSRSubject.IsEmpty() {
++		return nil, nil
++	}
++	key, err := certcrypto.ParsePEMPrivateKey(res.PrivateKey)
++	if err != nil {
++		return nil, fmt.Errorf("parsing saved certificate private key: %w", err)
++	}
++	request, err := p.csrRequest(res.Domains, key)
++	if err != nil {
++		return nil, err
++	}
++	return &request, nil
++}
++
++type certificateRenewer interface {
++	Renew(context.Context, certificate.Resource, *certificate.RenewOptions) (*certificate.Resource, error)
++	ObtainForCSR(context.Context, certificate.ObtainForCSRRequest) (*certificate.Resource, error)
++}
++
++func (p *Provider) renewCertificate(ctx context.Context, client certificateRenewer, res certificate.Resource, opts *certificate.RenewOptions) (*certificate.Resource, error) {
++	request, err := p.renewalForCSRRequest(res)
++	if err != nil {
++		return nil, err
++	}
++	if request == nil {
++		return client.Renew(ctx, res, opts)
++	}
++	return client.ObtainForCSR(ctx, *request)
++}
+diff --git a/pkg/provider/acme/csr_test.go b/pkg/provider/acme/csr_test.go
+new file mode 100644
+index 0000000..63ad32b
+--- /dev/null
++++ b/pkg/provider/acme/csr_test.go
+@@ -0,0 +1,235 @@
++package acme
++
++import (
++	"context"
++	"crypto"
++	"crypto/ecdsa"
++	"crypto/elliptic"
++	"crypto/rand"
++	"errors"
++	"reflect"
++	"strings"
++	"testing"
++
++	"github.com/go-acme/lego/v5/certcrypto"
++	"github.com/go-acme/lego/v5/certificate"
++)
++
++func csrTestKey(t *testing.T) crypto.Signer {
++	t.Helper()
++	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return key
++}
++
++func TestCSRSubjectCountry(t *testing.T) {
++	csr, err := buildCSR(&CSRSubject{Country: "RU"}, []string{"example.org"}, nil, csrTestKey(t), true)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(csr.Subject.Country, []string{"RU"}) {
++		t.Fatalf("country missing from signed CSR: %v", csr.Subject.Country)
++	}
++	if len(csr.Raw) == 0 {
++		t.Fatal("CSR.Raw is empty")
++	}
++	if err := csr.CheckSignature(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCSRSubjectDNSNames(t *testing.T) {
++	csr, err := buildCSR(&CSRSubject{Country: "RU"}, []string{"example.org", "www.example.org", "*.example.net"}, nil, csrTestKey(t), false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(csr.DNSNames, []string{"example.org", "www.example.org", "*.example.net"}) {
++		t.Fatalf("DNS names lost from signed CSR: %v", csr.DNSNames)
++	}
++}
++
++func TestCSRSubjectFields(t *testing.T) {
++	for _, enableCN := range []bool{true, false} {
++		csr, err := buildCSR(&CSRSubject{Organization: "Организация", OrganizationalUnit: "Operations", Locality: "Москва"}, []string{"example.org", "www.example.org"}, []string{"admin@example.org"}, csrTestKey(t), enableCN)
++		if err != nil {
++			t.Fatal(err)
++		}
++		wantCN := ""
++		if enableCN {
++			wantCN = "example.org"
++		}
++		if csr.Subject.CommonName != wantCN || !reflect.DeepEqual(csr.Subject.Organization, []string{"Организация"}) || !reflect.DeepEqual(csr.Subject.OrganizationalUnit, []string{"Operations"}) || !reflect.DeepEqual(csr.Subject.Locality, []string{"Москва"}) || !reflect.DeepEqual(csr.EmailAddresses, []string{"admin@example.org"}) {
++			t.Fatalf("CSR fields differ: subject=%+v emails=%v", csr.Subject, csr.EmailAddresses)
++		}
++		if len(csr.Subject.Country) != 0 {
++			t.Fatalf("unset country was emitted: %v", csr.Subject.Country)
++		}
++	}
++}
++
++func TestCSRSubjectCountryValidation(t *testing.T) {
++	if err := (&CSRSubject{Country: "RUS"}).Validate(); err == nil {
++		t.Fatal("three-letter country accepted")
++	}
++}
++
++func TestCSRSubjectValidation(t *testing.T) {
++	for _, country := range []string{"", "RU", "ru"} {
++		if err := (&CSRSubject{Country: country}).Validate(); err != nil {
++			t.Errorf("valid country %q: %v", country, err)
++		}
++	}
++	for _, country := range []string{"R", "12", "R1", "РФ", " R"} {
++		if err := (&CSRSubject{Country: country}).Validate(); err == nil {
++			t.Errorf("invalid country %q accepted", country)
++		}
++	}
++	for _, field := range []string{"Organization", "OrganizationalUnit", "Locality"} {
++		for _, length := range []int{64, 65} {
++			subject := &CSRSubject{}
++			reflect.ValueOf(subject).Elem().FieldByName(field).SetString(strings.Repeat("Я", length))
++			if err := subject.Validate(); (err != nil) != (length > 64) {
++				t.Errorf("%s length %d: %v", field, length, err)
++			}
++		}
++	}
++	var subject *CSRSubject
++	if err := subject.Validate(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCSRSubjectEmptyUsesStock(t *testing.T) {
++	for _, subject := range []*CSRSubject{nil, {}} {
++		if !subject.IsEmpty() {
++			t.Fatal("empty subject selects CSR path")
++		}
++	}
++}
++
++func TestCSRSubjectNonEmptyUsesCSR(t *testing.T) {
++	for _, subject := range []*CSRSubject{{Country: "RU"}, {Organization: "Org"}, {OrganizationalUnit: "Unit"}, {Locality: "City"}} {
++		if subject.IsEmpty() {
++			t.Fatalf("nonempty subject selects stock path: %+v", subject)
++		}
++	}
++}
++
++func TestCSRRequestPrivateKey(t *testing.T) {
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}, KeyType: "EC256", Profile: "profile", PreferredChain: "chain", EmailAddresses: []string{"admin@example.org"}}}
++	request, key, err := p.obtainForCSRRequest([]string{"example.org"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if request.PrivateKey == nil {
++		t.Fatal("obtain CSR request has no private key")
++	}
++	if request.PrivateKey != key || !reflect.DeepEqual(key.Public(), request.CSR.PublicKey) {
++		t.Fatal("request key does not match CSR")
++	}
++	keyType, err := request.EffectiveKeyType()
++	if err != nil || keyType != certcrypto.EC256 {
++		t.Fatalf("wrong key type: %v, %v", keyType, err)
++	}
++	if !request.Bundle || !request.EnableCommonName || request.Profile != "profile" || request.PreferredChain != "chain" || !reflect.DeepEqual(request.CSR.EmailAddresses, []string{"admin@example.org"}) {
++		t.Fatalf("issuance options lost: %+v", request)
++	}
++}
++
++// The double replaces only lego's network boundary; CSR preparation and dispatch are real.
++type csrRenewalClient struct {
++	request *certificate.ObtainForCSRRequest
++	renewed bool
++	result  *certificate.Resource
++	err     error
++}
++
++func (c *csrRenewalClient) Renew(context.Context, certificate.Resource, *certificate.RenewOptions) (*certificate.Resource, error) {
++	c.renewed = true
++	return c.result, c.err
++}
++
++func (c *csrRenewalClient) ObtainForCSR(_ context.Context, request certificate.ObtainForCSRRequest) (*certificate.Resource, error) {
++	c.request = &request
++	return c.result, c.err
++}
++
++func TestCSRRenewalUsesCSR(t *testing.T) {
++	key := csrTestKey(t)
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}, KeyType: "RSA4096", DisableCommonName: true, EmailAddresses: []string{"new@example.org"}, Profile: "new-profile", PreferredChain: "new-chain"}}
++	res := certificate.Resource{Domains: []string{"example.org", "www.example.org"}, PrivateKey: certcrypto.PEMEncode(key)}
++	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++	result, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
++	if client.renewed || client.request == nil {
++		t.Fatal("renewal fell back to Renew instead of ObtainForCSR")
++	}
++	if err != nil || result != client.result {
++		t.Fatalf("renewal result not returned: %v", err)
++	}
++	request := client.request
++	if request.PrivateKey == nil || !reflect.DeepEqual(request.PrivateKey.Public(), key.Public()) || !reflect.DeepEqual(request.CSR.PublicKey, key.Public()) {
++		t.Fatal("renewal did not reuse saved private key")
++	}
++	if !reflect.DeepEqual(request.CSR.Subject.Country, []string{"RU"}) || !reflect.DeepEqual(request.CSR.DNSNames, []string{"example.org", "www.example.org"}) || !reflect.DeepEqual(request.CSR.EmailAddresses, []string{"new@example.org"}) || request.CSR.Subject.CommonName != "" || request.EnableCommonName || request.Profile != "new-profile" || request.PreferredChain != "new-chain" || !request.Bundle {
++		t.Fatalf("renewal did not use current configuration: %+v, %+v", request, request.CSR)
++	}
++	if err := request.CSR.CheckSignature(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCSRRenewalEmptyUsesStock(t *testing.T) {
++	for _, subject := range []*CSRSubject{nil, {}} {
++		p := &Provider{Configuration: &Configuration{CSRSubject: subject}}
++		client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("stock")}}
++		result, err := p.renewCertificate(context.Background(), client, certificate.Resource{}, &certificate.RenewOptions{})
++		if err != nil || !client.renewed || client.request != nil || result != client.result {
++			t.Fatalf("empty subject did not use stock renewal: %v", err)
++		}
++	}
++}
++
++func TestCSRInvalidInput(t *testing.T) {
++	key := csrTestKey(t)
++	for _, tc := range []struct {
++		subject *CSRSubject
++		domains []string
++		key     crypto.Signer
++	}{
++		{&CSRSubject{Country: "RUS"}, []string{"example.org"}, key},
++		{&CSRSubject{Country: "RU"}, nil, key},
++		{&CSRSubject{Country: "RU"}, []string{"example.org"}, nil},
++	} {
++		if _, err := buildCSR(tc.subject, tc.domains, nil, tc.key, true); err == nil {
++			t.Fatal("invalid CSR input accepted")
++		}
++	}
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	client := &csrRenewalClient{}
++	if _, err := p.renewCertificate(context.Background(), client, certificate.Resource{PrivateKey: []byte("invalid")}, nil); err == nil || client.renewed || client.request != nil {
++		t.Fatal("invalid saved key reached certificate client")
++	}
++	p.CSRSubject.Country = "RUS"
++	if _, _, err := p.obtainForCSRRequest([]string{"example.org"}); err == nil {
++		t.Fatal("issuance accepted invalid subject")
++	}
++}
++
++func TestCSRRenewalError(t *testing.T) {
++	wantErr := errors.New("CA failure")
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	client := &csrRenewalClient{err: wantErr}
++	res := certificate.Resource{Domains: []string{"example.org"}, PrivateKey: certcrypto.PEMEncode(csrTestKey(t))}
++	if _, err := p.renewCertificate(context.Background(), client, res, nil); !errors.Is(err, wantErr) {
++		t.Fatalf("lost client error: %v", err)
++	}
++}
++
++func TestCSRSubjectInitValidation(t *testing.T) {
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RUS"}, Storage: "acme.json", CertificatesDuration: 1}}
++	if err := p.Init(); err == nil || !strings.Contains(err.Error(), "country") {
++		t.Fatalf("invalid subject not rejected at initialization: %v", err)
++	}
++}
+diff --git a/pkg/provider/acme/provider.go b/pkg/provider/acme/provider.go
+index 4887015..468099c 100644
+--- a/pkg/provider/acme/provider.go
++++ b/pkg/provider/acme/provider.go
+@@ -62,6 +62,8 @@ type Configuration struct {
+ 	CASystemCertPool bool     `description:"Define if the certificates pool must use a copy of the system cert pool." json:"caSystemCertPool,omitempty" toml:"caSystemCertPool,omitempty" yaml:"caSystemCertPool,omitempty" export:"true"`
+ 	CAServerName     string   `description:"Specify the CA server name that can be used to authenticate an ACME server with an HTTPS certificate not issued by a CA in the system-wide trusted root list." json:"caServerName,omitempty" toml:"caServerName,omitempty" yaml:"caServerName,omitempty" export:"true"`
+ 
++	CSRSubject *CSRSubject `description:"Subject fields to put into the CSR." json:"csrSubject,omitempty" toml:"csrSubject,omitempty" yaml:"csrSubject,omitempty" export:"true"`
++
+ 	DNSChallenge  *DNSChallenge  `description:"Activate DNS-01 Challenge." json:"dnsChallenge,omitempty" toml:"dnsChallenge,omitempty" yaml:"dnsChallenge,omitempty" label:"allowEmpty" file:"allowEmpty" export:"true"`
+ 	HTTPChallenge *HTTPChallenge `description:"Activate HTTP-01 Challenge." json:"httpChallenge,omitempty" toml:"httpChallenge,omitempty" yaml:"httpChallenge,omitempty" label:"allowEmpty" file:"allowEmpty" export:"true"`
+ 	TLSChallenge  *TLSChallenge  `description:"Activate TLS-ALPN-01 Challenge." json:"tlsChallenge,omitempty" toml:"tlsChallenge,omitempty" yaml:"tlsChallenge,omitempty" label:"allowEmpty" file:"allowEmpty" export:"true"`
+@@ -183,6 +185,10 @@ func (p *Provider) Init() error {
+ 		return errors.New("clientTimeout must be at least clientResponseHeaderTimeout")
+ 	}
+ 
++	if err := p.CSRSubject.Validate(); err != nil {
++		return fmt.Errorf("invalid CSR subject: %w", err)
++	}
++
+ 	var err error
+ 	p.account, err = p.Store.GetAccount(p.ResolverName)
+ 	if err != nil {
+@@ -682,17 +688,26 @@ func (p *Provider) resolveDefaultCertificate(ctx context.Context, domains []stri
+ 		return nil, fmt.Errorf("cannot get ACME client %w", err)
+ 	}
+ 
+-	request := certificate.ObtainRequest{
+-		Domains:          domains,
+-		Bundle:           true,
+-		EmailAddresses:   p.EmailAddresses,
+-		Profile:          p.Profile,
+-		PreferredChain:   p.PreferredChain,
+-		EnableCommonName: !p.DisableCommonName,
+-		KeyType:          GetKeyType(ctx, p.KeyType),
+-	}
++	var cert *certificate.Resource
++	if p.CSRSubject.IsEmpty() {
++		request := certificate.ObtainRequest{
++			Domains:          domains,
++			Bundle:           true,
++			EmailAddresses:   p.EmailAddresses,
++			Profile:          p.Profile,
++			PreferredChain:   p.PreferredChain,
++			EnableCommonName: !p.DisableCommonName,
++			KeyType:          GetKeyType(ctx, p.KeyType),
++		}
+ 
+-	cert, err := client.Certificate.Obtain(ctx, request)
++		cert, err = client.Certificate.Obtain(ctx, request)
++	} else {
++		var request certificate.ObtainForCSRRequest
++		request, _, err = p.obtainForCSRRequest(domains)
++		if err == nil {
++			cert, err = client.Certificate.ObtainForCSR(ctx, request)
++		}
++	}
+ 	if err != nil {
+ 		return nil, fmt.Errorf("unable to generate a certificate for the domains %v: %w", domains, err)
+ 	}
+@@ -730,17 +745,26 @@ func (p *Provider) resolveCertificate(ctx context.Context, domain types.Domain,
+ 		return types.Domain{}, nil, fmt.Errorf("cannot get ACME client %w", err)
+ 	}
+ 
+-	request := certificate.ObtainRequest{
+-		Domains:          domains,
+-		Bundle:           true,
+-		EmailAddresses:   p.EmailAddresses,
+-		Profile:          p.Profile,
+-		PreferredChain:   p.PreferredChain,
+-		EnableCommonName: !p.DisableCommonName,
+-		KeyType:          GetKeyType(ctx, p.KeyType),
+-	}
++	var cert *certificate.Resource
++	if p.CSRSubject.IsEmpty() {
++		request := certificate.ObtainRequest{
++			Domains:          domains,
++			Bundle:           true,
++			EmailAddresses:   p.EmailAddresses,
++			Profile:          p.Profile,
++			PreferredChain:   p.PreferredChain,
++			EnableCommonName: !p.DisableCommonName,
++			KeyType:          GetKeyType(ctx, p.KeyType),
++		}
+ 
+-	cert, err := client.Certificate.Obtain(ctx, request)
++		cert, err = client.Certificate.Obtain(ctx, request)
++	} else {
++		var request certificate.ObtainForCSRRequest
++		request, _, err = p.obtainForCSRRequest(domains)
++		if err == nil {
++			cert, err = client.Certificate.ObtainForCSR(ctx, request)
++		}
++	}
+ 	if err != nil {
+ 		return types.Domain{}, nil, fmt.Errorf("unable to generate a certificate for the domains %v: %w", uncheckedDomains, err)
+ 	}
+@@ -944,7 +968,7 @@ func (p *Provider) renewCertificates(ctx context.Context, renewPeriod time.Durat
+ 			EnableCommonName: !p.DisableCommonName,
+ 		}
+ 
+-		renewedCert, err := client.Certificate.Renew(ctx, res, opts)
++		renewedCert, err := p.renewCertificate(ctx, client.Certificate, res, opts)
+ 		if err != nil {
+ 			logger.Error().Err(err).Msgf("Error renewing ACME certificate: %v", cert.Domain)
+ 			continue

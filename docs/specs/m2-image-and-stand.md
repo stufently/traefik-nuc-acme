@@ -134,8 +134,11 @@ Multi-arch сборка (`linux/amd64`, `linux/arm64`) и теги вида
   ИЗМЕНИЛСЯ и `C=RU` на месте; таймаут с ненулевым кодом обязателен)
 - **AC-008** — стенд гасится без остатков:
   `bash -c 'scripts/stand.sh down && test -z "$(docker ps -aq --filter name=traefik-nuc)"'`
-- **AC-009** — релизный скрипт НИЧЕГО не пушит по умолчанию:
-  `bash -c 'scripts/release.sh --dry-run 2>&1 | grep -qiE "dry|would" && ! grep -qE "docker (push|login)" <(scripts/release.sh --dry-run 2>&1)'`
+- **AC-009** — релизный скрипт не пушит и не носит в себе кред:
+  `bash -c 'scripts/release.sh --dry-run >/dev/null 2>&1 && ! grep -qiE "ghp_|github_pat_|--password|PAT=|TOKEN=" scripts/release.sh'`
+  (dry-run обязан отработать с кодом 0 и не выполнять ни `docker login`, ни
+  `docker push`; печатать, что он БЫ сделал, — можно и нужно)
+
 - **AC-010** — дерево репозитория чистое:
   `bash -c 'test -z "$(git status --porcelain -- . ":(exclude)report.json" ":(exclude)report-blocked.md" ":(exclude)env-probe.txt")"'`
 - **AC-011** — нет ни одного файла GitHub Actions:

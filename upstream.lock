@@ -1,0 +1,9 @@
+{
+  "traefik_version": "v3.7.13",
+  "traefik_commit": "fc92cc118a0557a029c7019d5ee06665127b0f13",
+  "lego_version": "v5.4.1",
+  "lego_module": "github.com/go-acme/lego/v5",
+  "go_version": "1.26.0",
+  "builder_image": "golang:1.27-alpine",
+  "checked_at": "2026-09-06"
+}

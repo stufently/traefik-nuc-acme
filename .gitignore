@@ -1,7 +1,8 @@
 # Upstream sources are downloaded, never committed — this repo ships a patch.
 .upstream/
-# Go module cache staged for offline builds.
+# Go module and build caches staged for offline builds.
 .gomodcache/
+.gocache/
 # Vendored toolchains for sandboxed executors.
 .toolchain/
 dist/

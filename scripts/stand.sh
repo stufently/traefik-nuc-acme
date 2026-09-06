@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Integration stand: patched Traefik + Pebble.
-# Subcommands: up, wait, dump-cert, renew-check, down.
+# Integration stand: patched Traefik + Pebble + ACME body-capturing proxy.
+# Subcommands: up, wait, dump-cert, csr-dump, renew-check, down.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,6 +8,8 @@ compose_file="$root/docker/compose.yaml"
 data_dir="$root/docker/run"
 acme_json="$data_dir/acme.json"
 ca_dir="$data_dir/ca"
+capture_dir="$data_dir/capture"
+tls_dir="$data_dir/acmeproxy-tls"
 pebble_mgmt="https://127.0.0.1:24150"
 wait_timeout="${STAND_WAIT_TIMEOUT:-120}"
 renew_timeout="${STAND_RENEW_TIMEOUT:-180}"
@@ -18,15 +20,16 @@ compose() {
 
 usage() {
     cat <<'EOF'
-Usage: scripts/stand.sh <up|wait|dump-cert|renew-check|down>
+Usage: scripts/stand.sh <up|wait|dump-cert|csr-dump|renew-check|down>
 EOF
 }
 
 prepare_data() {
-    mkdir -p "$ca_dir"
+    mkdir -p "$ca_dir" "$capture_dir" "$tls_dir"
     umask 077
     : >"$acme_json"
     chmod 600 "$acme_json"
+    chmod 755 "$capture_dir" "$tls_dir"
 }
 
 wait_http_file() {
@@ -42,6 +45,27 @@ wait_http_file() {
     done
     echo "timeout waiting for $url" >&2
     return 1
+}
+
+issue_acmeproxy_cert() {
+    local key="$tls_dir/acmeproxy.key"
+    local crt="$tls_dir/acmeproxy.crt"
+    local csr="$tls_dir/acmeproxy.csr"
+    cp "$ca_dir/pebble-minica.pem" "$tls_dir/pebble-minica.pem"
+    docker cp traefik-nuc-pebble:/test/certs/pebble.minica.key.pem "$tls_dir/pebble.minica.key.pem"
+    openssl req -new -newkey rsa:2048 -nodes \
+        -keyout "$key" -out "$csr" \
+        -subj "/CN=acmeproxy" \
+        -addext "subjectAltName=DNS:acmeproxy" >/dev/null 2>&1
+    openssl x509 -req -in "$csr" \
+        -CA "$tls_dir/pebble-minica.pem" \
+        -CAkey "$tls_dir/pebble.minica.key.pem" \
+        -CAcreateserial -days 2 -sha256 \
+        -copy_extensions copy \
+        -out "$crt" >/dev/null 2>&1
+    chmod 600 "$key" "$tls_dir/pebble.minica.key.pem"
+    chmod 644 "$crt" "$tls_dir/pebble-minica.pem"
+    rm -f "$csr" "$tls_dir/pebble.minica.srl"
 }
 
 traefik_running() {
@@ -96,6 +120,93 @@ sys.exit(1)
 PY
 }
 
+# Read the newest captured ACME POST body that contains a CSR (finalize).
+# Source is nginx client_body_in_file_only files, not Traefik storage.
+csr_from_capture() {
+    python3 - "$capture_dir" <<'PY'
+import base64, json, os, sys
+
+capture = sys.argv[1]
+
+
+def b64url_decode(data):
+    if not isinstance(data, str) or not data:
+        raise ValueError("empty")
+    pad = "=" * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode(data + pad)
+
+
+def csr_der_from_body(raw):
+    body = json.loads(raw)
+    if not isinstance(body, dict) or "payload" not in body:
+        raise ValueError("not jws")
+    payload = json.loads(b64url_decode(body["payload"]))
+    if not isinstance(payload, dict) or "csr" not in payload:
+        raise ValueError("no csr")
+    return b64url_decode(payload["csr"])
+
+
+def iter_files(root):
+    for dirpath, _, filenames in os.walk(root):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            yield st.st_mtime, path
+
+
+found = []
+for mtime, path in iter_files(capture):
+    try:
+        raw = open(path, "rb").read()
+        der = csr_der_from_body(raw)
+    except (OSError, ValueError, json.JSONDecodeError):
+        continue
+    if der:
+        found.append((mtime, path, der))
+
+if not found:
+    sys.exit("no captured finalize CSR in %s" % capture)
+
+_mtime, _path, der = max(found, key=lambda item: item[0])
+b64 = base64.encodebytes(der).decode("ascii")
+sys.stdout.write("-----BEGIN CERTIFICATE REQUEST-----\n")
+sys.stdout.write(b64)
+if not b64.endswith("\n"):
+    sys.stdout.write("\n")
+sys.stdout.write("-----END CERTIFICATE REQUEST-----\n")
+PY
+}
+
+latest_csr_mtime() {
+    python3 - "$capture_dir" <<'PY'
+import json, os, sys, base64
+capture = sys.argv[1]
+
+def b64url_decode(data):
+    pad = "=" * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode(data + pad)
+
+latest = 0.0
+if os.path.isdir(capture):
+    for dirpath, _, filenames in os.walk(capture):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                raw = open(path, "rb").read()
+                body = json.loads(raw)
+                payload = json.loads(b64url_decode(body["payload"]))
+                if "csr" not in payload:
+                    continue
+                latest = max(latest, os.stat(path).st_mtime)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError, TypeError):
+                continue
+print("%.9f" % latest)
+PY
+}
+
 cmd_up() {
     compose down --remove-orphans >/dev/null 2>&1 || true
     prepare_data
@@ -103,6 +214,8 @@ cmd_up() {
     wait_http_file "$pebble_mgmt/roots/0" "$ca_dir/pebble-root.pem" 30
     docker cp traefik-nuc-pebble:/test/certs/pebble.minica.pem "$ca_dir/pebble-minica.pem"
     chmod 644 "$ca_dir/pebble-minica.pem"
+    issue_acmeproxy_cert
+    compose up -d acmeproxy
     compose up -d traefik
 }
 
@@ -114,13 +227,13 @@ cmd_wait() {
         fi
         if ! traefik_running; then
             echo "traefik is not running while waiting for acme.json" >&2
-            compose logs traefik >&2 || true
+            compose logs traefik acmeproxy >&2 || true
             return 1
         fi
         sleep 2
     done
     echo "timeout waiting for certificate in $acme_json" >&2
-    compose logs traefik >&2 || true
+    compose logs traefik acmeproxy >&2 || true
     return 1
 }
 
@@ -128,37 +241,45 @@ cmd_dump_cert() {
     cert_pem_from_store
 }
 
+cmd_csr_dump() {
+    csr_from_capture
+}
+
 cmd_renew_check() {
     if ! cert_pem_from_store >/dev/null; then
         echo "no certificate to renew; run up && wait first" >&2
         return 1
     fi
-    local before after
+    local before after before_csr
     before="$(cert_pem_from_store | openssl x509 -noout -serial)"
+    before_csr="$(latest_csr_mtime)"
     compose up -d --force-recreate --no-deps traefik
     local deadline=$((SECONDS + renew_timeout))
     while ((SECONDS < deadline)); do
         if after="$(cert_pem_from_store | openssl x509 -noout -serial 2>/dev/null)" \
             && [[ -n "$after" ]] && [[ "$after" != "$before" ]]; then
-            local subject
-            subject="$(cert_pem_from_store | openssl x509 -noout -subject)"
-            if echo "$subject" | grep -q "C = RU\|C=RU"; then
-                echo "renewed $before -> $after"
-                echo "$subject"
-                return 0
+            local now_csr subject
+            now_csr="$(latest_csr_mtime)"
+            if awk -v n="$now_csr" -v o="$before_csr" 'BEGIN { exit !(n > o) }'; then
+                subject="$(csr_from_capture 2>/dev/null | openssl req -noout -subject)"
+                if echo "$subject" | grep -qE "C *= *RU"; then
+                    echo "renewed $before -> $after"
+                    echo "$subject"
+                    return 0
+                fi
+                echo "renewed CSR missing C=RU: $subject" >&2
+                return 1
             fi
-            echo "renewed certificate missing C=RU: $subject" >&2
-            return 1
         fi
         if ! traefik_running; then
             echo "traefik is not running during renew-check" >&2
-            compose logs traefik >&2 || true
+            compose logs traefik acmeproxy >&2 || true
             return 1
         fi
         sleep 2
     done
-    echo "timeout waiting for renewed serial (still $before)" >&2
-    compose logs traefik >&2 || true
+    echo "timeout waiting for renewed serial and new captured CSR (still $before)" >&2
+    compose logs traefik acmeproxy >&2 || true
     return 1
 }
 
@@ -182,6 +303,7 @@ case "$1" in
     up) cmd_up ;;
     wait) cmd_wait ;;
     dump-cert) cmd_dump_cert ;;
+    csr-dump) cmd_csr_dump ;;
     renew-check) cmd_renew_check ;;
     down) cmd_down ;;
     -h|--help) usage ;;

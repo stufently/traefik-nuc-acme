@@ -87,11 +87,14 @@ embeds registry credentials.
 
 Patched Traefik plus Pebble (Let's Encrypt mock ACME). HTTP-01 is checked
 on port 5002. The test domain `stand.traefik-nuc.test` is a Docker network
-alias on the Traefik service.
+alias on the Traefik service. An nginx reverse proxy in front of Pebble
+records ACME request bodies so `csr-dump` can print the CSR that actually
+went to the CA (Pebble does not copy Subject into the issued leaf).
 
 ```bash
 scripts/stand.sh up
 scripts/stand.sh wait
+scripts/stand.sh csr-dump | openssl req -noout -subject
 scripts/stand.sh dump-cert | openssl x509 -noout -subject
 scripts/stand.sh renew-check
 scripts/stand.sh down

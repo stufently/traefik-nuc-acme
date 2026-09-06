@@ -3,10 +3,11 @@
 ## 2026-09-06
 
 - Added a multi-stage Docker image `traefik-nuc-acme:3.7.13-nuc.1` (no web
-  dashboard) and a Pebble integration stand (`docker/compose.yaml`,
-  `scripts/stand.sh`) that issues and renews a certificate with
-  `csrSubject.country=RU`. `scripts/release.sh` plans a multi-arch GHCR
-  publish and does not push unless `--push` is given.
+  dashboard, stripped with `-s -w`, no UPX) and a Pebble stand that proves
+  `csrSubject.country=RU` on the CSR Traefik sends: nginx `acmeproxy`
+  captures ACME bodies, `scripts/stand.sh csr-dump` prints the finalize CSR.
+  `scripts/release.sh` plans a multi-arch GHCR publish and does not push
+  unless `--push` is given.
 - Brought the CSR path into stock parity for IP SANs and the 64-byte common-name
   limit, and normalized country codes to uppercase. Added regression tests and
   expanded the offline mutation gate to ten mutations, including both sides of

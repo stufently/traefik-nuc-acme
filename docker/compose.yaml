@@ -10,12 +10,28 @@ services:
     ports:
       - "127.0.0.1:24150:15000"
 
+  acmeproxy:
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    container_name: traefik-nuc-acmeproxy
+    user: "1002:1002"
+    depends_on:
+      - pebble
+    volumes:
+      - ./acmeproxy.conf:/etc/nginx/nginx.conf:ro
+      - ./run/capture:/capture
+      - ./run/acmeproxy-tls:/etc/nginx/tls:ro
+    command:
+      - nginx
+      - -g
+      - daemon off;
+
   traefik:
     image: traefik-nuc-acme:3.7.13-nuc.1
     container_name: traefik-nuc-traefik
     user: "1002:1002"
     depends_on:
       - pebble
+      - acmeproxy
     volumes:
       - ./run/acme.json:/data/acme.json
       - ./run/ca:/etc/traefik/ca:ro

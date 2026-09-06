@@ -152,12 +152,15 @@ CSR из любого файла, который написал наш же Trae
   фоном, лог читается, контейнер сносится:
   `bash -c 'docker rm -f m2ac002 >/dev/null 2>&1; docker run -d --name m2ac002 traefik-nuc-acme:3.7.13-nuc.1 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --certificatesresolvers.t.acme.email=a@example.org --entrypoints.web.address=:80 >/dev/null && sleep 6 && docker logs m2ac002 2>&1 | grep -qi "invalid CSR subject"; rc=$?; docker rm -f m2ac002 >/dev/null 2>&1; exit $rc'`
 
-- **AC-003** — бинарь ужат стрипом (порог поднят: со `-s -w` он весит ~176 МБ,
-  прежние 150 МБ были недостижимы и вынуждали паковать UPX'ом):
-  `bash -c 'test "$(docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Size}}")" -lt 220000000'`
-  **UPX убрать.** Для долгоживущего прокси это плохой размен: бинарь
+- **AC-003** — бинарь ужат стрипом и НЕ упакован UPX. Меряем сам бинарь внутри
+  образа, а не `docker image inspect .Size`: в containerd-хранилище `.Size`
+  считает и распакованные слои, и сжатые блобы разом (замерено: `.Size`
+  245 902 772 при содержимом 182.8 МБ и `docker save` 53 914 112 — недостача
+  ровно равна сжатому размеру), поэтому это число ничего не измеряет:
+  `bash -c 'test "$(docker run --rm --entrypoint /bin/sh traefik-nuc-acme:3.7.13-nuc.1 -c "stat -c %s /traefik")" -lt 200000000'`
+  **UPX не применять.** Для долгоживущего прокси это плохой размен: бинарь
   распаковывается в память при каждом старте, страницы не разделяются между
-  контейнерами, а слои в реестре и так жмутся gzip.
+  контейнерами, а в реестр слои и так уезжают сжатыми (53.9 МБ).
 
 - **AC-004** — стенд поднимается и Pebble отвечает:
   `bash -c 'scripts/stand.sh up && scripts/stand.sh wait'`

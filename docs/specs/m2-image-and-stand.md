@@ -44,6 +44,7 @@ Docker-демон общий с хозяином, поэтому образ Pebb
 | **Корневой CA генерируется ЗАНОВО при каждом старте** контейнера. Вшить его в образ нельзя — стенд обязан забирать его в рантайме с `https://<pebble>:15000/roots/0`. | логи запуска: «Generated new root issuer CN=Pebble Root CA 45fc6c» |
 | Pebble НАМЕРЕННО отбраковывает 5% нонсов и спит перед валидацией. Без `PEBBLE_WFE_NONCEREJECT=0` и `PEBBLE_VA_NOSLEEP=1` стенд будет случайно краснеть, и это спишут на наш код. | логи: «Configured to reject 5% of good nonces»; `wfe/wfe.go`, `va/va.go` |
 | Бинарь Traefik собирается ОФЛАЙН без Node и без веб-интерфейса: `//go:embed static` доволен каталогом-заглушкой `webui/static/DONT-EDIT-FILES-IN-THIS-DIRECTORY.md`. | `upstream-go.sh build ./cmd/traefik` с `GOPROXY=off` → бинарь 243 МБ |
+| **Неверный `csrSubject` НЕ роняет Traefik**: он пишет `ERR The ACME resolve is skipped from the resolvers list  error="invalid CSR subject: …"` и продолжает работать без этого резолвера. Значит любой критерий, ждущий ЗАВЕРШЕНИЯ процесса на плохом конфиге, повиснет навсегда. | запуск собранного бинаря с `country=RUS`: сообщение в логе, `rc=124` по таймауту |
 | Продление можно вызвать НЕМЕДЛЕННО: при `certificatesDuration >= 8760` (год) период продления — 4 месяца, а сертификат Pebble живёт 90 дней, поэтому `renewCertificates` на старте видит его просроченным и продлевает сразу. | `getCertificateRenewDurations`, `provider.go:828` |
 
 ## Что сделать
@@ -116,8 +117,12 @@ Multi-arch сборка (`linux/amd64`, `linux/arm64`) и теги вида
 
 - **AC-001** — образ собирается:
   `bash -c 'docker build -t traefik-nuc-acme:3.7.13-nuc.1 -f Dockerfile . && docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Id}}"'`
-- **AC-002** — в образе именно НАША сборка: неверная страна валит старт с внятной ошибкой:
-  `bash -c 'docker run --rm traefik-nuc-acme:3.7.13-nuc.1 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --entrypoints.web.address=:80 2>&1 | grep -qi country'`
+- **AC-002** — в образе именно НАША сборка: неверная страна даёт нашу ошибку в
+  логах. ⚠️ Traefik при этом НЕ ЗАВЕРШАЕТСЯ (см. факт про пропуск резолвера
+  ниже), поэтому критерий обязан быть НЕБЛОКИРУЮЩИМ — контейнер поднимается
+  фоном, лог читается, контейнер сносится:
+  `bash -c 'docker rm -f m2ac002 >/dev/null 2>&1; docker run -d --name m2ac002 traefik-nuc-acme:3.7.13-nuc.1 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --certificatesresolvers.t.acme.email=a@example.org --entrypoints.web.address=:80 >/dev/null && sleep 6 && docker logs m2ac002 2>&1 | grep -qi "invalid CSR subject"; rc=$?; docker rm -f m2ac002 >/dev/null 2>&1; exit $rc'`
+
 - **AC-003** — бинарь ужат (не 243 МБ):
   `bash -c 'test "$(docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Size}}")" -lt 150000000'`
 - **AC-004** — стенд поднимается и Pebble отвечает:

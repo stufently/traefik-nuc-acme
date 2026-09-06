@@ -1,9 +1,9 @@
 diff --git a/pkg/provider/acme/csr.go b/pkg/provider/acme/csr.go
 new file mode 100644
-index 0000000..f55b37a
+index 0000000..55640d5
 --- /dev/null
 +++ b/pkg/provider/acme/csr.go
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,173 @@
 +package acme
 +
 +import (
@@ -13,6 +13,8 @@ index 0000000..f55b37a
 +	"crypto/x509"
 +	"errors"
 +	"fmt"
++	"net"
++	"strings"
 +	"unicode/utf8"
 +
 +	"github.com/go-acme/lego/v5/certcrypto"
@@ -72,16 +74,27 @@ index 0000000..f55b37a
 +		return nil, errors.New("cannot build CSR without a private key")
 +	}
 +
++	var dnsNames []string
++	var ipAddresses []net.IP
++	for _, altname := range domains {
++		if ip := net.ParseIP(altname); ip != nil {
++			ipAddresses = append(ipAddresses, ip)
++		} else {
++			dnsNames = append(dnsNames, altname)
++		}
++	}
++
 +	template := &x509.CertificateRequest{
-+		DNSNames:       domains,
++		DNSNames:       dnsNames,
++		IPAddresses:    ipAddresses,
 +		EmailAddresses: emails,
 +	}
-+	if enableCommonName {
++	if len(domains[0]) <= 64 && enableCommonName {
 +		template.Subject.CommonName = domains[0]
 +	}
 +	if subject != nil {
-+		if subject.Country != "" {
-+			template.Subject.Country = []string{subject.Country}
++		if country := strings.ToUpper(subject.Country); country != "" {
++			template.Subject.Country = []string{country}
 +		}
 +		if subject.Organization != "" {
 +			template.Subject.Organization = []string{subject.Organization}
@@ -166,10 +179,10 @@ index 0000000..f55b37a
 +}
 diff --git a/pkg/provider/acme/csr_test.go b/pkg/provider/acme/csr_test.go
 new file mode 100644
-index 0000000..63ad32b
+index 0000000..f4f7da1
 --- /dev/null
 +++ b/pkg/provider/acme/csr_test.go
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,284 @@
 +package acme
 +
 +import (
@@ -179,6 +192,7 @@ index 0000000..63ad32b
 +	"crypto/elliptic"
 +	"crypto/rand"
 +	"errors"
++	"net"
 +	"reflect"
 +	"strings"
 +	"testing"
@@ -219,6 +233,54 @@ index 0000000..63ad32b
 +	}
 +	if !reflect.DeepEqual(csr.DNSNames, []string{"example.org", "www.example.org", "*.example.net"}) {
 +		t.Fatalf("DNS names lost from signed CSR: %v", csr.DNSNames)
++	}
++}
++
++func TestCSRSubjectIPAddresses(t *testing.T) {
++	for _, address := range []string{"203.0.113.10", "2001:db8::10"} {
++		csr, err := buildCSR(&CSRSubject{Country: "RU"}, []string{address, "example.org"}, nil, csrTestKey(t), true)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if len(csr.IPAddresses) != 1 || !csr.IPAddresses[0].Equal(net.ParseIP(address)) || !reflect.DeepEqual(csr.DNSNames, []string{"example.org"}) {
++			t.Fatalf("IP and DNS SANs not separated: IP=%v DNS=%v", csr.IPAddresses, csr.DNSNames)
++		}
++		if csr.Subject.CommonName != address {
++			t.Fatalf("IP common name lost: %q", csr.Subject.CommonName)
++		}
++	}
++}
++
++func TestCSRSubjectCommonNameLength(t *testing.T) {
++	for _, length := range []int{64, 65} {
++		domain := strings.Repeat("a", length-4) + ".org"
++		csr, err := buildCSR(&CSRSubject{Country: "RU", Organization: "Example Org", OrganizationalUnit: "Ops", Locality: "Moscow"}, []string{domain}, nil, csrTestKey(t), true)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if !reflect.DeepEqual(csr.DNSNames, []string{domain}) || !reflect.DeepEqual(csr.Subject.Country, []string{"RU"}) || !reflect.DeepEqual(csr.Subject.Organization, []string{"Example Org"}) || !reflect.DeepEqual(csr.Subject.OrganizationalUnit, []string{"Ops"}) || !reflect.DeepEqual(csr.Subject.Locality, []string{"Moscow"}) {
++			t.Fatalf("CN length handling lost SAN or other subject fields: subject=%+v DNS=%v", csr.Subject, csr.DNSNames)
++		}
++		if length == 64 && csr.Subject.CommonName != domain {
++			t.Fatalf("64-byte common name omitted: %q", csr.Subject.CommonName)
++		}
++		if length == 65 && csr.Subject.CommonName != "" {
++			t.Fatalf("65-byte common name was not omitted: %q", csr.Subject.CommonName)
++		}
++	}
++}
++
++func TestCSRSubjectCountryUppercase(t *testing.T) {
++	subject := &CSRSubject{Country: "ru", Organization: "Example Org", OrganizationalUnit: "Ops", Locality: "Moscow"}
++	csr, err := buildCSR(subject, []string{"example.org"}, nil, csrTestKey(t), true)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(csr.Subject.Country, []string{"RU"}) {
++		t.Fatalf("country was not uppercased: %v", csr.Subject.Country)
++	}
++	if subject.Country != "ru" || !reflect.DeepEqual(csr.Subject.Organization, []string{"Example Org"}) || !reflect.DeepEqual(csr.Subject.OrganizationalUnit, []string{"Ops"}) || !reflect.DeepEqual(csr.Subject.Locality, []string{"Moscow"}) {
++		t.Fatalf("country normalization changed configuration or other fields: config=%+v subject=%+v", subject, csr.Subject)
 +	}
 +}
 +

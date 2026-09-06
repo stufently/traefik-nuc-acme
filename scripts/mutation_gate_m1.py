@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kill the six M1 regressions offline and restore the exact upstream bytes.
+"""Kill M1 and M1a regressions offline and restore the exact upstream bytes.
 
 Each mutation runs only its named Go test, first unchanged and then mutated.
 A compiler error, unrelated assertion, absent test, or timeout is not a kill.
@@ -33,7 +33,7 @@ class Mutation:
 MUTATIONS = (
     Mutation(
         "Country removed",
-        "template.Subject.Country = []string{subject.Country}",
+        "template.Subject.Country = []string{country}",
         "template.Subject.Country = nil",
         "TestCSRSubjectCountry",
         't.Fatalf("country missing from signed CSR: %v", csr.Subject.Country)',
@@ -68,10 +68,38 @@ MUTATIONS = (
     ),
     Mutation(
         "DNSNames lost",
-        "DNSNames:       domains,",
+        "DNSNames:       dnsNames,",
         "DNSNames:       nil,",
         "TestCSRSubjectDNSNames",
         't.Fatalf("DNS names lost from signed CSR: %v", csr.DNSNames)',
+    ),
+    Mutation(
+        "IP address sent as DNS SAN",
+        "if ip := net.ParseIP(altname); ip != nil {",
+        "if ip := net.ParseIP(altname); ip != nil && false {",
+        "TestCSRSubjectIPAddresses",
+        't.Fatalf("IP and DNS SANs not separated: IP=%v DNS=%v", csr.IPAddresses, csr.DNSNames)',
+    ),
+    Mutation(
+        "Common name length limit removed",
+        "if len(domains[0]) <= 64 && enableCommonName {",
+        "if enableCommonName {",
+        "TestCSRSubjectCommonNameLength",
+        't.Fatalf("65-byte common name was not omitted: %q", csr.Subject.CommonName)',
+    ),
+    Mutation(
+        "64-byte common name incorrectly omitted",
+        "if len(domains[0]) <= 64 && enableCommonName {",
+        "if len(domains[0]) < 64 && enableCommonName {",
+        "TestCSRSubjectCommonNameLength",
+        't.Fatalf("64-byte common name omitted: %q", csr.Subject.CommonName)',
+    ),
+    Mutation(
+        "Country normalization bypassed",
+        "template.Subject.Country = []string{country}",
+        "template.Subject.Country = []string{subject.Country}",
+        "TestCSRSubjectCountryUppercase",
+        't.Fatalf("country was not uppercased: %v", csr.Subject.Country)',
     ),
 )
 

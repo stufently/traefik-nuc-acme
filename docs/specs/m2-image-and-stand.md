@@ -45,6 +45,9 @@ Docker-демон общий с хозяином, поэтому образ Pebb
 | Pebble НАМЕРЕННО отбраковывает 5% нонсов и спит перед валидацией. Без `PEBBLE_WFE_NONCEREJECT=0` и `PEBBLE_VA_NOSLEEP=1` стенд будет случайно краснеть, и это спишут на наш код. | логи: «Configured to reject 5% of good nonces»; `wfe/wfe.go`, `va/va.go` |
 | Бинарь Traefik собирается ОФЛАЙН без Node и без веб-интерфейса: `//go:embed static` доволен каталогом-заглушкой `webui/static/DONT-EDIT-FILES-IN-THIS-DIRECTORY.md`. | `upstream-go.sh build ./cmd/traefik` с `GOPROXY=off` → бинарь 243 МБ |
 | **Неверный `csrSubject` НЕ роняет Traefik**: он пишет `ERR The ACME resolve is skipped from the resolvers list  error="invalid CSR subject: …"` и продолжает работать без этого резолвера. Значит любой критерий, ждущий ЗАВЕРШЕНИЯ процесса на плохом конфиге, повиснет навсегда. | запуск собранного бинаря с `country=RUS`: сообщение в логе, `rc=124` по таймауту |
+| **Pebble НЕ переносит Subject из CSR в выданный сертификат** — берёт только SAN и публичный ключ (`ca/ca.go:466`: `newCertificate(csr.DNSNames, csr.IPAddresses, csr.PublicKey, …)`). Так же поступает Let's Encrypt. Значит `C=RU` в ЛИСТЕ не докажет ни один мок-CA; доказывать надо на CSR, который мы ОТПРАВЛЯЕМ. | чтение `ca/ca.go`; стенд выдал `subject=` при живом `csrSubject.country=RU` |
+| **У стенда ДВА разных CA.** `roots/0` — issuing CA (новый на каждый старт), им подписаны выданные сертификаты. TLS самого `https://pebble:14000` подписан СТАТИЧЕСКИМ `test/certs/pebble.minica.pem`. Доверять надо ОБОИМ: только `roots/0` — и рукопожатие к директории падает, а выглядит это как «ACME не работает». | находка исполнителя, подтверждена работающим стендом |
+| **Pebble дружелюбен к прокси**: абсолютные URL он строит из `request.Host` и уважает `X-Forwarded-Proto` (`wfe/wfe.go:631` `relativeEndpoint`). Поэтому обратный прокси перед ним прозрачен — все последующие запросы, включая finalize с CSR, пойдут через прокси сами. | чтение `wfe/wfe.go` |
 | Продление можно вызвать НЕМЕДЛЕННО: при `certificatesDuration >= 8760` (год) период продления — 4 месяца, а сертификат Pebble живёт 90 дней, поэтому `renewCertificates` на старте видит его просроченным и продлевает сразу. | `getCertificateRenewDurations`, `provider.go:828` |
 
 ## Что сделать
@@ -96,6 +99,25 @@ Multi-arch сборка (`linux/amd64`, `linux/arm64`) и теги вида
 `--dry-run` и по умолчанию НИЧЕГО не пушить; без явного флага пуша он должен
 только печатать, что бы сделал. Токенов и кред в скрипт не зашивать.
 
+### 4b. Перехват CSR на проводе — ГЛАВНОЕ в этой доработке
+
+`C=RU` в выданном сертификате недостижим (см. факты). Контракт продукта —
+«Traefik ОТПРАВЛЯЕТ CSR с заданным Subject», и проверять надо именно это, на
+живом протоколе, а не только юнит-тестами вехи 1.
+
+Поставь между Traefik и Pebble обратный прокси (`acmeproxy`), который
+СОХРАНЯЕТ тела запросов. `caServer` у Traefik переводится на прокси. Схему
+выбери сам: у nginx тела пишутся файлами при `client_body_in_file_only on`;
+годится и другой лёгкий образ. Прокси ходит в Pebble по TLS, доверяя `minica`.
+Если lego откажется от `http://` в `caServer` — терминируй TLS на прокси
+сертификатом, которому Traefik доверяет; это допустимо, но сперва попробуй
+простой вариант.
+
+Добавь в `scripts/stand.sh` подкоманду `csr-dump`: найти последний захваченный
+finalize-запрос, достать из JWS поле `payload`, декодировать base64url, взять из
+него `csr`, декодировать base64url в DER и напечатать CSR в PEM на stdout.
+Ненулевой код возврата, если захвата нет — молчаливое «пусто» недопустимо.
+
 ### 5. Документация
 
 - `CHANGELOG.md` — запись за 2026-09-06 про образ и стенд.
@@ -123,20 +145,27 @@ Multi-arch сборка (`linux/amd64`, `linux/arm64`) и теги вида
   фоном, лог читается, контейнер сносится:
   `bash -c 'docker rm -f m2ac002 >/dev/null 2>&1; docker run -d --name m2ac002 traefik-nuc-acme:3.7.13-nuc.1 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --certificatesresolvers.t.acme.email=a@example.org --entrypoints.web.address=:80 >/dev/null && sleep 6 && docker logs m2ac002 2>&1 | grep -qi "invalid CSR subject"; rc=$?; docker rm -f m2ac002 >/dev/null 2>&1; exit $rc'`
 
-- **AC-003** — бинарь ужат (не 243 МБ):
-  `bash -c 'test "$(docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Size}}")" -lt 150000000'`
+- **AC-003** — бинарь ужат стрипом (порог поднят: со `-s -w` он весит ~176 МБ,
+  прежние 150 МБ были недостижимы и вынуждали паковать UPX'ом):
+  `bash -c 'test "$(docker image inspect traefik-nuc-acme:3.7.13-nuc.1 --format "{{.Size}}")" -lt 220000000'`
+  **UPX убрать.** Для долгоживущего прокси это плохой размен: бинарь
+  распаковывается в память при каждом старте, страницы не разделяются между
+  контейнерами, а слои в реестре и так жмутся gzip.
+
 - **AC-004** — стенд поднимается и Pebble отвечает:
   `bash -c 'scripts/stand.sh up && scripts/stand.sh wait'`
-- **AC-005** — 🚩 ГЛАВНОЕ: выпущенный Pebble сертификат несёт `C=RU`:
-  `bash -c 'scripts/stand.sh dump-cert | openssl x509 -noout -subject | grep -q "C = RU\|C=RU"'`
+- **AC-005** — 🚩 ГЛАВНОЕ: CSR, реально ушедший в CA, несёт `C=RU`:
+  `bash -c 'scripts/stand.sh csr-dump | openssl req -noout -subject | grep -qE "C *= *RU"'`
+
 - **AC-006** — в сертификате есть тестовый домен (HTTP-01 реально прошёл, а не подсунут самоподписанный):
   `bash -c 'scripts/stand.sh dump-cert | openssl x509 -noout -text | grep -A1 "Subject Alternative Name" | grep -q DNS'`
-- **AC-007** — 🚩 ПРОДЛЕНИЕ сохраняет Subject: после перезапуска с
-  `certificatesDuration=8760` сертификат ПЕРЕВЫПУСКАЕТСЯ (другой serial) и снова несёт `C=RU`:
+- **AC-007** — 🚩 ПРОДЛЕНИЕ снова отправляет CSR с Subject: после перезапуска с
+  `certificatesDuration=8760` сертификат перевыпускается (serial МЕНЯЕТСЯ) и
+  захвачен НОВЫЙ finalize, в CSR которого снова `C=RU`:
   `bash -c 'scripts/stand.sh renew-check'`
-  (подкоманду напиши сам: снять serial до, перезапустить с большим
-  `certificatesDuration`, дождаться нового сертификата, сверить, что serial
-  ИЗМЕНИЛСЯ и `C=RU` на месте; таймаут с ненулевым кодом обязателен)
+  (подкоманду доработай: сверить смену serial И проверить свежезахваченный CSR;
+  таймаут с ненулевым кодом обязателен)
+
 - **AC-008** — стенд гасится без остатков:
   `bash -c 'scripts/stand.sh down && test -z "$(docker ps -aq --filter name=traefik-nuc)"'`
 - **AC-009** — релизный скрипт не пушит и не носит в себе кред:

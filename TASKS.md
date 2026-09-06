@@ -1,25 +1,44 @@
 # Backlog
 
-## Milestone 2 — Docker image and integration stand
+## Milestone 2 — DONE 2026-09-06 (image + Pebble stand)
 
-- [ ] Multi-stage `Dockerfile`: download pinned Traefik source, apply the
-      patchset, run `go test`, build the binary. No network access at runtime.
-- [ ] `docker/compose.yaml` integration stand: patched Traefik + Pebble (the
-      Let's Encrypt mock ACME server) + a test domain. Prove end-to-end that
-      (a) the issued certificate carries the configured Subject, (b) HTTP-01
-      completes, (c) renewal rebuilds the CSR correctly.
-      **Pin Pebble by digest, not by version.** `ghcr.io/letsencrypt/pebble`
-      publishes no version tags at all — only `latest` and `sha-<commit>`
-      (checked 2026-09-06 against the GHCR tag catalogue, 31 tags). A
-      `:v2.10.1` pin fails with `manifest unknown`. Current digest
-      `sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199`,
-      platforms linux/amd64 + linux/arm64. Verify before writing the spec:
-      Pebble mints its own root CA and serves it at `:15000/roots/0`, and
-      Traefik needs that root trusted — otherwise TLS to the mock ACME server
-      fails exactly the way `curl` to the live НУЦ endpoint fails today.
-- [ ] Local release script: build `linux/amd64` + `linux/arm64`, tag as
-      `<traefik-version>-nuc.<revision>` (never a bare `3.7.13`, so the image is
-      not mistaken for official Traefik), push to GHCR with a host-side PAT.
+Delivered: multi-stage `Dockerfile` (pinned by digest, patch applied from the
+local tarball, no Node), `docker/compose.yaml` stand with Pebble and an
+`acmeproxy` that captures ACME request bodies, `scripts/stand.sh`,
+`scripts/release.sh` (written, never executed — see the owner's item below).
+All 11 acceptance criteria re-run green by the gate; the stand was also brought
+up by hand.
+
+Proven on the live protocol, not just in unit tests:
+`subject=C=RU, L=Moscow, O=NUC Stand, CN=stand.traefik-nuc.test` in the CSR
+captured on the wire, and renewal reissues (serial changes) while sending a CSR
+that still carries the subject.
+
+Facts that milestone 3 must not rediscover:
+
+- **Pebble does not copy Subject from the CSR into the leaf** — it takes SANs
+  and the public key only (`ca/ca.go:466`). Let's Encrypt behaves the same way.
+  So `C=RU` is proven on the CSR **we send**, never on the issued leaf; against
+  the live НУЦ that criterion tests НУЦ's behaviour, not our code.
+- **The stand has TWO CAs.** `roots/0` is the issuing CA (regenerated on every
+  start); the TLS of the directory endpoint itself is signed by the static
+  `test/certs/pebble.minica.pem`. Trust both — trusting only `roots/0` breaks
+  the handshake to the directory and looks like "ACME is broken".
+- Pebble builds absolute URLs from `request.Host` and honours
+  `X-Forwarded-Proto` (`wfe/wfe.go:631`), which is why a reverse proxy in front
+  of it is transparent.
+- Challenge validation goes to **5002/5001**, not 80/443.
+- `PEBBLE_WFE_NONCEREJECT=0` and `PEBBLE_VA_NOSLEEP=1` are required, otherwise
+  Pebble rejects 5% of nonces by design and the stand reddens at random.
+- **The image ships without the web dashboard** (owner's decision): `go:embed
+  static` is satisfied by the placeholder directory, so no Node in the build.
+  `api.dashboard` will not work — say so in README and COMPATIBILITY.md.
+- **Do not use UPX.** With `-s -w` the binary is ~180 MB and that is fine:
+  registry layers are gzipped anyway (`docker save` = 53.9 MB), while UPX would
+  decompress into RAM on every start and lose page sharing between containers.
+  Note `docker image inspect .Size` is not a usable measure here — on the
+  containerd store it counts uncompressed layers *and* compressed blobs
+  (245.9 MB reported against 182.8 MB of real content).
 
 ## Milestone 3 — НУЦ preset and SEO/GEO documentation
 
@@ -36,6 +55,23 @@
       to a `gh-pages` branch without a workflow. Verify that before starting.
 
 ## Open questions for the owner
+
+- [ ] **GHCR push and where the PAT lives.** `scripts/release.sh` is written and
+      supports `--dry-run`; the push itself was deliberately NOT given to an
+      executor and never ran — publishing outward under the owner's account with
+      a `write:packages` token is the owner's call. Say where the token is kept
+      and the push can be done as a separate step.
+- [ ] **A typo in `csrSubject` silently disables the resolver.** Traefik does not
+      fail on an invalid subject: it logs `ERR The ACME resolve is skipped from
+      the resolvers list` and keeps running, so the user gets NO certificates and
+      only a log line says why (verified: the process never exits, `rc=124` on a
+      timeout). Stock Traefik treats every resolver error this way. Options: a
+      warning in the README (milestone 3), or a deliberate behaviour change as
+      its own milestone. Do NOT fix this in passing — an executor already tried
+      to close it with a `log.Fatal` patch to make a criterion pass, and that
+      patch was withdrawn (fake hunk hashes, error matched by text, and it would
+      take the whole proxy down over one resolver).
+
 
 - [ ] Is there verified access to НУЦ (personally or through a controlled legal
       entity) to obtain even one real test certificate? Without accreditation an

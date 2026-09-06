@@ -1,0 +1,30 @@
+log:
+  level: DEBUG
+
+entryPoints:
+  acme:
+    address: ":5002"
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: false
+
+certificatesResolvers:
+  pebble:
+    acme:
+      email: stand@traefik-nuc.test
+      storage: /data/acme.json
+      certificatesDuration: 8760
+      caServer: https://pebble:14000/dir
+      # pebble.minica.pem authenticates the ACME API (SAN DNS:pebble).
+      # pebble-root.pem is the issuing CA from https://pebble:15000/roots/0.
+      caCertificates:
+        - /etc/traefik/ca/pebble-minica.pem
+        - /etc/traefik/ca/pebble-root.pem
+      httpChallenge:
+        entryPoint: acme
+      csrSubject:
+        country: RU
+        organization: "NUC Stand"
+        locality: Moscow

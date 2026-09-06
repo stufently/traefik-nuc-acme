@@ -1,0 +1,13 @@
+.git
+.gocache
+.gomodcache
+.toolchain
+.upstream/*
+!.upstream/traefik-v3.7.13.tar.gz
+docker/run
+docs
+env-probe.txt
+report.json
+report-blocked.md
+*.md
+!LICENSE

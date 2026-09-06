@@ -62,15 +62,45 @@ Machine-readable: [`upstream.lock`](upstream.lock).
 
 ## Status
 
-Early. Milestone 1 (the patch itself, tested against a local mock ACME server)
-is in progress. Docker images, the НУЦ preset and published documentation come
-in later milestones — this README will stop being a promise and start being a
-description when they land.
+Milestone 2: a patched image and a Pebble integration stand. The НУЦ preset
+and published documentation come later.
+
+## Docker image
+
+Tag: `traefik-nuc-acme:3.7.13-nuc.1`. Never a bare `3.7.13` — that tag would
+be mistaken for official Traefik.
+
+```bash
+docker build -t traefik-nuc-acme:3.7.13-nuc.1 -f Dockerfile .
+```
+
+The image is built **without Node and without the web dashboard**.
+`api.dashboard` will not work. That is an intentional trade so the binary
+can be compiled offline from the release tarball plus the patch, with no
+yarn/Node toolchain in the build.
+
+Multi-arch publish is `scripts/release.sh`. Default and `--dry-run` only
+print the plan; `--push` is required to publish, and the script never
+embeds registry credentials.
+
+## Integration stand
+
+Patched Traefik plus Pebble (Let's Encrypt mock ACME). HTTP-01 is checked
+on port 5002. The test domain `stand.traefik-nuc.test` is a Docker network
+alias on the Traefik service.
+
+```bash
+scripts/stand.sh up
+scripts/stand.sh wait
+scripts/stand.sh dump-cert | openssl x509 -noout -subject
+scripts/stand.sh renew-check
+scripts/stand.sh down
+```
 
 ## Building
 
-See `docs/` once milestone 2 lands. There is deliberately no CI in this
-repository yet; everything is built and tested locally with Docker.
+Build and test locally with Docker. There is deliberately no CI in this
+repository yet.
 
 ## License
 

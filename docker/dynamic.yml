@@ -1,0 +1,7 @@
+tls:
+  stores:
+    default:
+      defaultGeneratedCert:
+        resolver: pebble
+        domain:
+          main: stand.traefik-nuc.test

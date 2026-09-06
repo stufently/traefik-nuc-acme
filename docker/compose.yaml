@@ -1,0 +1,29 @@
+name: traefik-nuc
+
+services:
+  pebble:
+    image: ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    container_name: traefik-nuc-pebble
+    environment:
+      PEBBLE_WFE_NONCEREJECT: "0"
+      PEBBLE_VA_NOSLEEP: "1"
+    ports:
+      - "127.0.0.1:24150:15000"
+
+  traefik:
+    image: traefik-nuc-acme:3.7.13-nuc.1
+    container_name: traefik-nuc-traefik
+    user: "1002:1002"
+    depends_on:
+      - pebble
+    volumes:
+      - ./run/acme.json:/data/acme.json
+      - ./run/ca:/etc/traefik/ca:ro
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    networks:
+      default:
+        aliases:
+          - stand.traefik-nuc.test

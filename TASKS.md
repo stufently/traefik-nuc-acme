@@ -40,6 +40,20 @@ Facts that milestone 3 must not rediscover:
   containerd store it counts uncompressed layers *and* compressed blobs
   (245.9 MB reported against 182.8 MB of real content).
 
+## Milestone 3a — IN_PROGRESS since 2026-09-07 (config guard)
+
+Executor `cx-traefik-nuc-m3`, spec `docs/specs/m3-config-guard.md`, 12 criteria.
+Adds a `validate-csr-subject` subcommand INSIDE the patch that loads the static
+configuration with Traefik's own loaders (`pkg/cli`), plus an image entrypoint
+that runs it before starting the server. Stock resolver behaviour is untouched.
+
+Why a subcommand and not a separate binary: Traefik resolves its config through
+a chain (`/etc/traefik/traefik`, `$XDG_CONFIG_HOME/traefik`,
+`$HOME/.config/traefik`, `./traefik`, plus the `traefik.configfile` flag), and a
+reimplementation would diverge silently. A guard reading a different file is
+worse than no guard — the absence of a check is visible, a check answering a
+different question is not.
+
 ## Milestone 3 — НУЦ preset and SEO/GEO documentation
 
 - [ ] НУЦ configuration preset: `caServer`, `keyType=RSA2048`,

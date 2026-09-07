@@ -8,7 +8,14 @@
   file as its "original" and restores the tree to it.
 - `scripts/nuc-ca-bundle.sh` stages the bundle next to its destination, so the
   final move is a rename within one filesystem, as the usage text promises.
-- `scripts/upstream-go.sh run` builds into `.runbin/` instead of `GOCACHE`.
+- `scripts/upstream-go.sh run` builds into `.runbin/` instead of `GOCACHE`, and
+  names the binary per process: two concurrent runs of one package shared a path,
+  so the second build could replace the binary the first was about to exec.
+- Added `scripts/nuc_preset_checks.sh`, covering what the acceptance criteria
+  could not see: pins compared in full rather than by prefix, an existing bundle
+  surviving a failed update, TMPDIR left clean on both paths, the README mount
+  path matching the preset, a declared challenge entryPoint, and argument
+  boundaries through the Go wrapper.
 
 - Added a НУЦ static-config preset (`presets/nuc.yml`) with the verified ACME
   directory URL, `keyType: RSA2048` (assumption), `csrSubject.country: RU`, and

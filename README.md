@@ -156,14 +156,17 @@ CSR subjects; other ACME configuration errors still follow Traefik's behavior.
 | lego | `v5.4.1` |
 | Go (upstream `go.mod`) | `1.26.0` |
 
-Machine-readable: [`upstream.lock`](upstream.lock).
+Machine-readable: [`upstream.lock`](upstream.lock). Which upstream releases the
+patch applies to, and why the range is exactly one, is measured in
+[`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Status
 
 Milestone 4: НУЦ preset (`presets/nuc.yml`) and an externally mounted CA
 bundle (`scripts/nuc-ca-bundle.sh`). Live issuance against НУЦ remains
-UNVERIFIED. Earlier milestones: fail-closed CSR subject validation before
-startup, a patched image, and a Pebble integration stand.
+UNVERIFIED because the CA is unreachable without accreditation. Earlier
+milestones: fail-closed CSR subject validation before startup, a patched image,
+and a Pebble integration stand.
 
 ## Docker image
 

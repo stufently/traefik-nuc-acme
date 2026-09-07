@@ -2,6 +2,11 @@
 
 ## 2026-09-07
 
+- Added `COMPATIBILITY.md`: the patch applies to Traefik v3.7.13 and to none of
+  the other fourteen releases tested. Before v3.7.13 the renewal hunk has no
+  `EnableCommonName` in `RenewOptions` to anchor on; before v3.7.6 Traefik has
+  no lego v5 at all. No v3.8 tags exist upstream.
+
 - The mutation gate now refuses to start when another gate is already running in
   the clone, or when the upstream tree does not match the committed patch. Two
   concurrent gates cement a mutation: the second snapshots an already-mutated

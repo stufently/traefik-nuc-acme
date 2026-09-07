@@ -168,8 +168,14 @@ Merged to `main` and pushed.
 
 ## Milestone 5 — documentation (was part of milestone 3)
 
-- [ ] НУЦ configuration preset: `caServer`, `keyType=RSA2048`,
-      `csrSubject.country=RU`.
+- [x] **DONE in milestone 4:** НУЦ configuration preset and its CA bundle.
+- **ANSWERED BY THE OWNER 2026-09-07 (relayed by the coordinator): "по нуц
+      доступов нет".** There is no access to the production НУЦ, so the live
+      issuance criterion is removed from the project, acceptance runs against
+      the Pebble stand, and the docs say the production CA is UNREACHABLE —
+      verification deferred until accreditation. Word it as a gap in ACCESS,
+      never as an assumption or an oversight: a later session must see that
+      nobody skipped a check, the check was not available to run.
       **Acceptance runs against the Pebble stand, not against the live НУЦ.**
       "Works against production НУЦ" is removed as a criterion: it depends on
       accreditation nobody has confirmed, not on code quality. Ship the preset
@@ -189,11 +195,14 @@ Merged to `main` and pushed.
 
 ## Open questions for the owner
 
-- [ ] **GHCR push and where the PAT lives.** `scripts/release.sh` is written and
-      supports `--dry-run`; the push itself was deliberately NOT given to an
-      executor and never ran — publishing outward under the owner's account with
-      a `write:packages` token is the owner's call. Say where the token is kept
-      and the push can be done as a separate step.
+- [ ] **GHCR push and where the PAT lives.** STILL OPEN 2026-09-07: the owner
+      answered the НУЦ question and did not answer this one. Silence is not a
+      cancellation, so the stated default stands — the image is built locally
+      and pushed nowhere. `scripts/release.sh` supports `--dry-run`; the push
+      itself was deliberately never given to an executor and has never run.
+      Publishing outward under the owner's account with a `write:packages`
+      token is the owner's call: say where the token is kept and the push
+      becomes a separate step.
 - [x] **DECIDED 2026-09-07 (coordinator, not the owner): validate `csrSubject`
       BEFORE Traefik, do not touch Traefik's behaviour.** The hazard is real —
       an invalid subject does not stop Traefik: it logs `ERR The ACME resolve is

@@ -328,16 +328,39 @@ Backlog from the Codex cross-mutation run (out of this milestone's one fix round
 kept as the next milestone's material — three of them need a test harness the
 repository has deliberately never built):
 
-- [ ] The retry LOOP itself is untested: mutants that `return 0` after attempts
-      are exhausted, that retry unconditionally without asking the classifier, or
-      that turn `continue` into `return 1`, all survive every criterion. Killing
-      them needs a harness that fakes `compose` and `cert_pem_from_store`, not
-      another fixture.
-- [ ] Three more classifier fixtures would pin what the current set does not:
-      the full URN replaced by the bare word `unauthorized` (verified by hand —
-      it survives), a two-plus-one line split where `unauthorized` and the
-      challenge share a line and a stray `404` follows later, and a positive log
-      where a near-miss line precedes the real race line.
+- [x] The retry LOOP itself is untested — closed by milestone 8.
+- [x] Three more classifier fixtures — closed by milestone 8.
+
+## Milestone 8 — DONE 2026-09-07 (offline harness for the renew-check loop)
+
+Executor `cx-traefik-renew-harness`, spec `docs/specs/m8-renew-loop-harness.md`,
+7 criteria, commits `aadf20e`, `52dc378`. Closes both M7 backlog items above.
+`scripts/renew_check_tests.sh` runs the REAL `cmd_renew_check` offline: `stand.sh`
+is now sourceable (the dispatch `case` sits behind
+`if [[ "${BASH_SOURCE[0]}" == "$0" ]]`, the only production change), the test
+replaces `compose`, `cert_pem_from_store`, `latest_csr_mtime`, `csr_from_capture`
+and `traefik_running`, and generates real certificates and CSRs with openssl so
+the PEM/CSR parsing stays genuine. `scripts/mutation_gate_stand.py` replays the
+regressions under a lock, refuses to score a kill without a green baseline and an
+exactly-once replacement, and restores original bytes and sha256 even on failure.
+
+Accepted by hand: seven criteria re-run green, the whole diff read, two mutations
+replayed by me from a `cp` backup with sha256 checked before and after — the
+exhausted-loop `return 0` and a removed `C=RU` check, both killed by their own
+case with the exact expected message.
+
+**MY mutation found a hole the six did not cover** (fix round, commit `a09ff04`):
+the freshness check `now_csr > before_csr` could be replaced by `true` and all six
+cases stayed green — a new certificate serial with a STALE captured CSR would have
+been reported as a successful renewal. Added a seventh case
+`stale_csr_never_fresh` (the fake freezes the CSR mtime) and a seventh mutation to
+the gate; gate is 7/7.
+
+⚠️ **Counting `compose` calls is not counting restarts.** The first M8 run stopped
+by contract, correctly: my spec demanded "exactly ONE call to the fake `compose`",
+but `cmd_renew_check` also calls compose for logs and status — 3 calls per lost
+attempt. The fake now counts a restart only when the arguments are
+`up -d --force-recreate`.
 
 ## Deferred from the milestone 1 review (Grok cross-run, 2026-09-06)
 

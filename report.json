@@ -1,0 +1,88 @@
+{
+  "criteria": [
+    {
+      "id": "AC-001",
+      "status": "blocked",
+      "command": "bash -c 'd=$(mktemp -d) && tar -xzf .upstream/traefik-v3.7.13.tar.gz -C \"$d\" && git -C \"$d/traefik-3.7.13\" init -q && git -C \"$d/traefik-3.7.13\" apply --check /home/deploy/exec-clones/traefik-nuc-m3/patches/0001-csr-subject.patch'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-002",
+      "status": "blocked",
+      "command": "bash -c 'f=$(mktemp) && git -C .upstream/traefik diff > \"$f\" && diff -u patches/0001-csr-subject.patch \"$f\"'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-003",
+      "status": "blocked",
+      "command": "bash -c 'scripts/upstream-go.sh build ./...'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-004",
+      "status": "blocked",
+      "command": "bash -c 'scripts/upstream-go.sh test -count=1 ./pkg/provider/acme/... ./pkg/config/... ./cmd/...'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-005",
+      "status": "blocked",
+      "command": "bash -c 'scripts/upstream-go.sh vet ./pkg/provider/acme/... ./cmd/...'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-006",
+      "status": "blocked",
+      "command": "bash -c 'python3 scripts/mutation_gate_m1.py'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-007",
+      "status": "blocked",
+      "command": "bash -c 'out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/m3a.json 2>&1); rc=$?; if ! printf \"%s\\n\" \"$out\" | grep -q \"invalid CSR subject in resolver\"; then printf \"нет ожидаемой причины отказа: %s\\n\" \"$out\" >&2; exit 3; fi; if [ \"$rc\" -eq 0 ]; then echo \"гвард не отказал: код 0\" >&2; exit 4; fi'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска. Дословная строка отказа отсутствует: гвард не реализован и проверка не выполнялась."
+    },
+    {
+      "id": "AC-008",
+      "status": "blocked",
+      "command": "bash -c 'out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --certificatesresolvers.t.acme.csrsubject.country=RU --certificatesresolvers.t.acme.storage=/tmp/m3b.json 2>&1) && printf \"%s\\n\" \"$out\" | grep -q \"csrSubject OK\"'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-009",
+      "status": "blocked",
+      "command": "bash -c 'd=$(mktemp -d); printf \"certificatesResolvers:\\n  t:\\n    acme:\\n      storage: /tmp/m3c.json\\n      csrSubject:\\n        country: RUS\\n\" > \"$d/cfg.yml\"; out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --configfile=\"$d/cfg.yml\" 2>&1); rc=$?; if ! printf \"%s\\n\" \"$out\" | grep -q \"invalid CSR subject in resolver\"; then printf \"конфиг из файла не учтён: %s\\n\" \"$out\" >&2; exit 3; fi; if [ \"$rc\" -eq 0 ]; then echo \"гвард не отказал на файле: код 0\" >&2; exit 4; fi'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска. Дословная строка отказа отсутствует: гвард не реализован и проверка не выполнялась."
+    },
+    {
+      "id": "AC-010",
+      "status": "blocked",
+      "command": "bash -c 'docker rm -f m3guard >/dev/null 2>&1; docker build -q -t traefik-nuc-acme:m3 -f Dockerfile . >/dev/null || { echo \"образ не собрался\" >&2; exit 2; }; docker run -d --name m3guard traefik-nuc-acme:m3 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --entrypoints.web.address=:80 >/dev/null; sleep 8; st=$(docker inspect -f \"{{.State.Status}}:{{.State.ExitCode}}\" m3guard); lg=$(docker logs m3guard 2>&1); docker rm -f m3guard >/dev/null 2>&1; if ! printf \"%s\\n\" \"$lg\" | grep -q \"invalid CSR subject in resolver\"; then printf \"нет ожидаемой причины в логах: %s\\n\" \"$lg\" >&2; exit 3; fi; if [ \"$st\" != \"exited:1\" ]; then printf \"контейнер не завершился с кодом 1: %s\\n\" \"$st\" >&2; exit 4; fi'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска. Дословная строка отказа отсутствует: гвард не реализован и проверка не выполнялась."
+    },
+    {
+      "id": "AC-011",
+      "status": "blocked",
+      "command": "bash -c 'scripts/stand.sh down >/dev/null 2>&1; scripts/stand.sh up && scripts/stand.sh wait && scripts/stand.sh csr-dump | openssl req -noout -subject | grep -qE \"C *= *RU\"; rc=$?; scripts/stand.sh down >/dev/null 2>&1; exit $rc'",
+      "rc": null,
+      "note": "Не запускался: реализация остановлена из-за противоречия области изменений; см. report-blocked.md. rc=null означает отсутствие запуска."
+    },
+    {
+      "id": "AC-012",
+      "status": "pass",
+      "command": "bash -c 'test -z \"$(git status --porcelain -- . \":(exclude)report.json\" \":(exclude)report-blocked.md\" \":(exclude)env-probe.txt\")\" && test -z \"$(git ls-files -- \".github\")\" && test ! -d .github'",
+      "rc": 0,
+      "note": "Проверка чистоты дерева с предусмотренными исключениями и отсутствия .github; реализация M3 не выполнена."
+    }
+  ]
+}

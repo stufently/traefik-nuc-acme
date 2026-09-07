@@ -78,7 +78,11 @@ mutations, 8 survived. Its findings and my verification of each are kept in
 does kill both entrypoint mutations, with distinct exit codes proving the
 reason). Four holes closed with new tests; the gate now runs 17 mutations, all
 killed on their own assert lines. One known gap left open deliberately: nothing
-tests that the entrypoint keeps excluding `healthcheck` from the guard.
+tests that the entrypoint keeps excluding `healthcheck` from the guard. Left
+open because the regression costs one extra validation pass before probing a
+live daemon that already has a valid subject — not a fail-open, and cheaper than
+the shell-test machinery it would take to cover. This is a priced gap, not debt;
+do not spend a milestone on it.
 
 Merged to `main` and pushed. The executor's `report.json` was dropped from the
 repository and gitignored: it describes one run, not the product, and M1/M2 had

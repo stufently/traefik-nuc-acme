@@ -106,8 +106,24 @@ sha256 восстанавливаются в `finally`. Прежние мута�
   подкоманду, существующую логику `initACMEProvider` не меняем.
 - `docs/specs/`, `docs/reviews/`, `TASKS.md`, `CLAUDE.md`, `LICENSE`,
   `upstream.lock`, `scripts/upstream-go.sh`, `.gitignore`.
-- `.upstream/traefik/` вне `pkg/provider/acme/`, `cmd/validatecsr/` и одной
-  строки регистрации в `cmd/traefik/traefik.go`.
+- `.upstream/traefik/` вне `pkg/provider/acme/`, `cmd/validatecsr/` и
+  `cmd/traefik/traefik.go`. **В `traefik.go` разрешено ровно и только два места**
+  (исправлено 2026-09-07 по обоснованной остановке исполнителя: прежняя редакция
+  разрешала «одну строку регистрации», чем запрещала строку импорта и делала
+  веху невыполнимой):
+  1) строка импорта нового пакета в существующем блоке `import`;
+  2) блок регистрации рядом с `healthcheck`, по его же образцу, вместе с
+     обработкой ошибки:
+     ```go
+     err = cmdTraefik.AddCommand(validatecsr.NewCmd(&tConfig.Configuration, loaders))
+     if err != nil {
+         stdlog.Println(err)
+         os.Exit(1)
+     }
+     ```
+  Ничего другого в этом файле не менять: ни порядок существующих команд, ни
+  `loaders`, ни `cli.Execute`. Отдельный файл в `cmd/traefik/` ради косвенности
+  не заводить.
 - **`.github/` не создавать НИ В КАКОМ ВИДЕ** — минуты GitHub Actions исчерпаны
   до 2026-10-06.
 - `go.mod`/`go.sum` апстрима: новых зависимостей веха не вводит.

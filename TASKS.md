@@ -214,8 +214,18 @@ Merged to `main` and pushed.
       the owner): Wordstat shows no RU search demand for this subject, so the
       SEO premise these items rest on is not there. Left for the owner to
       confirm rather than removed.
-- [ ] GitHub Pages — only if the site can be built locally in Docker and pushed
-      to a `gh-pages` branch without a workflow. Verify that before starting.
+- [ ] GitHub Pages — **feasibility checked 2026-09-07, work not started; the
+      owner decides whether it is wanted.** Publishing from a branch needs no
+      workflow FILE in the repository, so the standing "no `.github/workflows/`"
+      rule survives, but GitHub still runs its own managed
+      `pages-build-deployment` on every push to the published branch: the
+      Actions tab stops being empty (`total_count` is 0 today). The repository
+      is public, where a run billed zero minutes when that was measured on
+      2026-09-06 — the "no CI" rule was nevertheless kept for public
+      repositories too, deliberately. Beyond the rule this is outward-facing
+      publishing under the owner's account, which is the owner's call, not the
+      coordinator's. Recommendation: skip it. The README is the documentation,
+      and a site would duplicate it in a second place that can drift.
 
 ## Open questions for the owner
 

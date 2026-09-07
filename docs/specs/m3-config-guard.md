@@ -131,18 +131,22 @@ sha256 восстанавливаются в `finally`. Прежние мута�
 - **AC-006** — все мутации убиты, включая новые:
   `bash -c 'python3 scripts/mutation_gate_m1.py'`
 - **AC-007** — 🚩 гвард ОТКАЗЫВАЕТ на невалидном субъекте, и отказ по ЗАДУМАННОЙ
-  причине (проверяется ТЕКСТОМ, не кодом):
-  `bash -c 'out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/m3a.json 2>&1); rc=$?; printf "%s\n" "$out" | grep -q "invalid CSR subject in resolver" && test $rc -ne 0'`
+  причине (проверяется ТЕКСТОМ; разные коды выхода говорят, что именно не так):
+  `bash -c 'out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/m3a.json 2>&1); rc=$?; if ! printf "%s\n" "$out" | grep -q "invalid CSR subject in resolver"; then printf "нет ожидаемой причины отказа: %s\n" "$out" >&2; exit 3; fi; if [ "$rc" -eq 0 ]; then echo "гвард не отказал: код 0" >&2; exit 4; fi'`
+
 - **AC-008** — 🚩 гвард ПРОПУСКАЕТ валидный субъект (обратное направление):
   `bash -c 'out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --certificatesresolvers.t.acme.csrsubject.country=RU --certificatesresolvers.t.acme.storage=/tmp/m3b.json 2>&1) && printf "%s\n" "$out" | grep -q "csrSubject OK"'`
-- **AC-009** — гвард читает конфиг ЦЕПОЧКОЙ ЗАГРУЗЧИКОВ Traefik, а не сам:
-  конфиг из ФАЙЛА в нестандартном месте, указанный `--configfile`, обязан быть
-  учтён (свой парсер этого не сделает):
-  `bash -c 'd=$(mktemp -d); printf "certificatesResolvers:\n  t:\n    acme:\n      storage: /tmp/m3c.json\n      csrSubject:\n        country: RUS\n" > "$d/cfg.yml"; out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --configfile="$d/cfg.yml" 2>&1); rc=$?; printf "%s\n" "$out" | grep -q "invalid CSR subject in resolver" && test $rc -ne 0'`
+- **AC-009** — гвард читает конфиг ЦЕПОЧКОЙ ЗАГРУЗЧИКОВ Traefik, а не сам: конфиг
+  из ФАЙЛА в нестандартном месте, указанный `--configfile`, обязан быть учтён —
+  собственный парсер этого не сделает:
+  `bash -c 'd=$(mktemp -d); printf "certificatesResolvers:\n  t:\n    acme:\n      storage: /tmp/m3c.json\n      csrSubject:\n        country: RUS\n" > "$d/cfg.yml"; out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --configfile="$d/cfg.yml" 2>&1); rc=$?; if ! printf "%s\n" "$out" | grep -q "invalid CSR subject in resolver"; then printf "конфиг из файла не учтён: %s\n" "$out" >&2; exit 3; fi; if [ "$rc" -eq 0 ]; then echo "гвард не отказал на файле: код 0" >&2; exit 4; fi'`
+
 - **AC-010** — 🚩 ОБРАЗ отказывается стартовать с невалидным конфигом: контейнер
-  ЗАВЕРШАЕТСЯ с ненулевым кодом и в логах наша причина. Критерий неблокирующий —
-  Traefik без гварда НЕ завершается, и ожидание его выхода повисло бы навсегда:
-  `bash -c 'docker rm -f m3guard >/dev/null 2>&1; docker build -q -t traefik-nuc-acme:m3 -f Dockerfile . >/dev/null && docker run -d --name m3guard traefik-nuc-acme:m3 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --entrypoints.web.address=:80 >/dev/null && sleep 8; st=$(docker inspect -f "{{.State.Status}}:{{.State.ExitCode}}" m3guard); lg=$(docker logs m3guard 2>&1); docker rm -f m3guard >/dev/null 2>&1; printf "%s\n" "$lg" | grep -q "invalid CSR subject in resolver" && test "$st" = "exited:1"'`
+  ЗАВЕРШАЕТСЯ с ненулевым кодом и в логах наша причина. Критерий НЕБЛОКИРУЮЩИЙ:
+  Traefik без гварда не завершается вовсе, и ожидание его выхода повисло бы
+  навсегда — поэтому контейнер поднимается фоном и опрашивается:
+  `bash -c 'docker rm -f m3guard >/dev/null 2>&1; docker build -q -t traefik-nuc-acme:m3 -f Dockerfile . >/dev/null || { echo "образ не собрался" >&2; exit 2; }; docker run -d --name m3guard traefik-nuc-acme:m3 --certificatesresolvers.t.acme.csrsubject.country=RUS --certificatesresolvers.t.acme.storage=/tmp/a.json --entrypoints.web.address=:80 >/dev/null; sleep 8; st=$(docker inspect -f "{{.State.Status}}:{{.State.ExitCode}}" m3guard); lg=$(docker logs m3guard 2>&1); docker rm -f m3guard >/dev/null 2>&1; if ! printf "%s\n" "$lg" | grep -q "invalid CSR subject in resolver"; then printf "нет ожидаемой причины в логах: %s\n" "$lg" >&2; exit 3; fi; if [ "$st" != "exited:1" ]; then printf "контейнер не завершился с кодом 1: %s\n" "$st" >&2; exit 4; fi'`
+
 - **AC-011** — 🚩 счастливый путь НЕ сломан: с валидным конфигом стенд
   по-прежнему выпускает сертификат, а CSR несёт Subject:
   `bash -c 'scripts/stand.sh down >/dev/null 2>&1; scripts/stand.sh up && scripts/stand.sh wait && scripts/stand.sh csr-dump | openssl req -noout -subject | grep -qE "C *= *RU"; rc=$?; scripts/stand.sh down >/dev/null 2>&1; exit $rc'`

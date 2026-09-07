@@ -1,0 +1,2018 @@
+{
+  "date": "2026-09-07",
+  "base_commit": "4fe3cb97be8ef40b5456d0125fdc1dd6228f1b5d",
+  "spec": "docs/specs/m4-cross-review.md",
+  "m4_commands": {
+    "AC-001": "bash -c 'out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --configfile=presets/nuc.yml 2>&1); rc=$?; if [ \"$rc\" -ne 0 ]; then printf \"гвард отверг пресет: %s\\n\" \"$out\" >&2; exit 3; fi; printf \"%s\\n\" \"$out\" | grep -q \"csrSubject OK\" || { echo \"нет подтверждения csrSubject OK\" >&2; exit 4; }'",
+    "AC-002": "bash -c 'd=$(mktemp -d); sed \"s/country: RU$/country: RUS/\" presets/nuc.yml > \"$d/bad.yml\"; out=$(scripts/upstream-go.sh run ./cmd/traefik validate-csr-subject --configfile=\"$d/bad.yml\" 2>&1); rc=$?; printf \"%s\\n\" \"$out\" | grep -q \"invalid CSR subject in resolver\" || { printf \"нет ожидаемой причины: %s\\n\" \"$out\" >&2; exit 3; }; [ \"$rc\" -ne 0 ] || { echo \"испорченный пресет принят\" >&2; exit 4; }'",
+    "AC-003": "bash -c 'grep -qF \"caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directory\" presets/nuc.yml || { echo \"caServer не тот, что проверен\" >&2; exit 3; }'",
+    "AC-004": "bash -c 'grep -qE \"^ *keyType: RSA2048\" presets/nuc.yml || { echo \"нет keyType RSA2048\" >&2; exit 3; }; grep -qE \"^ *country: RU$\" presets/nuc.yml || { echo \"нет country RU\" >&2; exit 4; }'",
+    "AC-005": "bash -c 'd=$(mktemp -d); scripts/nuc-ca-bundle.sh -o \"$d/ca.pem\" >/dev/null 2>&1 || { echo \"скрипт не собрал бандл\" >&2; exit 2; }; n=$(grep -c \"BEGIN CERTIFICATE\" \"$d/ca.pem\"); [ \"$n\" -eq 2 ] || { echo \"в бандле $n сертификатов, нужно 2\" >&2; exit 3; }; v=$(curl -sS --cacert \"$d/ca.pem\" -o \"$d/dir.json\" -w \"%{ssl_verify_result}\" https://nuc-acme.voskhod.ru/acme/api/v1/directory 2>/dev/null); [ \"$v\" = \"0\" ] || { echo \"TLS не проверился: ssl_verify_result=$v\" >&2; exit 4; }; grep -q \"newOrder\" \"$d/dir.json\" || { echo \"директория не получена\" >&2; exit 5; }'",
+    "AC-006": "bash -c 'for pin in root sub; do d=$(mktemp -d); out=$(scripts/nuc-ca-bundle.sh --$pin-sha256 0000000000000000000000000000000000000000000000000000000000000000 -o \"$d/ca.pem\" 2>&1); rc=$?; [ \"$rc\" -ne 0 ] || { echo \"неверный пин $pin принят\" >&2; exit 3; }; printf \"%s\\n\" \"$out\" | grep -qiE \"sha256|пин|checksum\" || { printf \"отказ по $pin без внятной причины: %s\\n\" \"$out\" >&2; exit 4; }; [ ! -e \"$d/ca.pem\" ] || { echo \"при отказе по $pin остался файл назначения\" >&2; exit 5; }; ls -a \"$d\" | grep -q nuc-ca-bundle && { echo \"при отказе по $pin остался промежуточный файл\" >&2; exit 6; }; done; true'",
+    "AC-007": "bash -c 'd=$(mktemp -d); scripts/nuc-ca-bundle.sh -o \"$d/a.pem\" >/dev/null 2>&1 && scripts/nuc-ca-bundle.sh -o \"$d/b.pem\" >/dev/null 2>&1 && cmp \"$d/a.pem\" \"$d/b.pem\"'",
+    "AC-008": "bash -c 'docker build -q -t traefik-nuc-acme:m4 -f Dockerfile . >/dev/null || { echo \"образ не собрался\" >&2; exit 2; }; out=$(docker run --rm -v \"$PWD/presets/nuc.yml:/etc/traefik/traefik.yml:ro\" traefik-nuc-acme:m4 validate-csr-subject 2>&1); rc=$?; printf \"%s\\n\" \"$out\" | grep -q \"csrSubject OK\" || { printf \"гвард в образе не принял пресет: %s\\n\" \"$out\" >&2; exit 3; }; [ \"$rc\" -eq 0 ] || { echo \"ненулевой код при валидном пресете\" >&2; exit 4; }'",
+    "AC-009": "bash -c 'grep -qiE \"AIA|Authority Information Access\" README.md || { echo \"не описано, откуда брать издателя\" >&2; exit 3; }; grep -qiE \"UNVERIFIED|не проверен\" README.md || { echo \"нет предупреждения о непроверенности\" >&2; exit 4; }'",
+    "AC-010": "bash -c 'git diff --quiet HEAD -- patches/ || { echo \"патч изменён\" >&2; exit 3; }; s=$(sha256sum patches/0001-csr-subject.patch | cut -d\" \" -f1); [ \"$s\" = \"9ac0205f847957d95316c7fd7fdf4d1389c64e3cefe9d066cc96cb6276e1e035\" ] || { echo \"sha патча разошлась: $s\" >&2; exit 4; }'",
+    "AC-011": "bash -c 'python3 scripts/mutation_gate_m1.py'",
+    "AC-012": "bash -c 'test -z \"$(git status --porcelain -- . \":(exclude)report.json\" \":(exclude)report-blocked.md\")\" || { echo \"дерево грязное\" >&2; exit 3; }; test -z \"$(git ls-files -- \".github\")\" && test ! -d .github || { echo \"появился .github\" >&2; exit 4; }'"
+  },
+  "before": [
+    {
+      "id": "AC-010",
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "id": "AC-011",
+      "rc": 0,
+      "stdout": "Original cmd/validatecsr/validatecsr.go sha256: e0f902da15f700de1af4f5bfd55ce46ca2a961e22278aa71f7be8daae5569d6e\nOriginal cmd/validatecsr/validatecsr_test.go sha256: 57a42e04ce60f15f0bc483bb7f9ba56d5ec7315683836e6f2aa9586eb438f4f6\nOriginal pkg/provider/acme/csr.go sha256: 63c801a002f4e3ddb4be6ed63602a24bff9dcac02cf878e85921c6cfc114dbde\nOriginal pkg/provider/acme/csr_test.go sha256: 5b7d75ec14818efa7dafe8914737a30aefb261c1142edcb9fd12c8a4cc9dd7f8\nCountry removed: убит; csr_test.go:34: country missing from signed CSR: []\nRenewal falls back to Renew: убит; csr_test.go:215: renewal fell back to Renew instead of ObtainForCSR\nPrivateKey omitted: убит; csr_test.go:176: obtain CSR request has no private key\nThree-letter country accepted: убит; csr_test.go:123: three-letter country accepted\nEmpty subject selects CSR: убит; csr_test.go:156: empty subject selects CSR path\nDNSNames lost: убит; csr_test.go:50: DNS names lost from signed CSR: []\nIP address sent as DNS SAN: убит; csr_test.go:61: IP and DNS SANs not separated: IP=[] DNS=[203.0.113.10 example.org]\nCommon name length limit removed: убит; csr_test.go:83: 65-byte common name was not omitted: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.org\"\n64-byte common name incorrectly omitted: убит; csr_test.go:80: 64-byte common name omitted: \"\"\nCountry normalization bypassed: убит; csr_test.go:95: country was not uppercased: [ru]\nGuard checks only the first resolver: убит; validatecsr_test.go:50: second resolver was not rejected: <nil>\nGuard always exits zero: убит; validatecsr_test.go:165: invalid subject exit code = 0, want 1; stdout=\"\" stderr=\"{\\\"level\\\":\\\"debug\\\",\\\"time\\\":\\\"2026-09-07T06:31:27Z\\\",\\\"message\\\":\\\"Configuration loaded from flags\\\"}\\ninvalid CSR subject in resolver \\\"nuc\\\": CSR subject country must contain exactly two ASCII letters\\n\"\nGuard stops at a resolver without ACME: убит; validatecsr_test.go:103: resolver after a non-ACME one was not checked: <nil>\nGuard walks resolvers in map order: убит; validatecsr_test.go:63: guard did not report the first resolver in sorted order: invalid CSR subject in resolver \"b-bad\": CSR subject country must contain exactly two ASCII letters\nGuard validates only subjects with a country: убит; validatecsr_test.go:75: subject without a country was not validated: <nil>\nGuard drops a loader from the chain: убит; validatecsr_test.go:85: loader chain resized: got 3, want 4\nGuard error omits resolver name: убит; validatecsr_test.go:39: invalid country error missing resolver or validation reason: invalid CSR subject: CSR subject country must contain exactly two ASCII letters\nУбито 17/17; исходные байты и sha256 всех 4 файлов восстановлены\n",
+      "stderr": ""
+    },
+    {
+      "id": "AC-012",
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "baseline": [
+    {
+      "id": "AC-001",
+      "rc": 0,
+      "seconds": 0.515,
+      "log": "baseline/AC-001.log",
+      "output": ""
+    },
+    {
+      "id": "AC-002",
+      "rc": 0,
+      "seconds": 0.515,
+      "log": "baseline/AC-002.log",
+      "output": ""
+    },
+    {
+      "id": "AC-003",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "baseline/AC-003.log",
+      "output": ""
+    },
+    {
+      "id": "AC-004",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "baseline/AC-004.log",
+      "output": ""
+    },
+    {
+      "id": "AC-005",
+      "rc": 0,
+      "seconds": 0.816,
+      "log": "baseline/AC-005.log",
+      "output": ""
+    },
+    {
+      "id": "AC-006",
+      "rc": 0,
+      "seconds": 0.565,
+      "log": "baseline/AC-006.log",
+      "output": ""
+    },
+    {
+      "id": "AC-007",
+      "rc": 0,
+      "seconds": 0.616,
+      "log": "baseline/AC-007.log",
+      "output": ""
+    },
+    {
+      "id": "AC-008",
+      "rc": 0,
+      "seconds": 2.469,
+      "log": "baseline/AC-008.log",
+      "output": ""
+    },
+    {
+      "id": "AC-009",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "baseline/AC-009.log",
+      "output": ""
+    }
+  ],
+  "after": [
+    {
+      "id": "AC-001",
+      "rc": 0,
+      "seconds": 0.516,
+      "log": "after/AC-001.log",
+      "output": ""
+    },
+    {
+      "id": "AC-002",
+      "rc": 0,
+      "seconds": 0.515,
+      "log": "after/AC-002.log",
+      "output": ""
+    },
+    {
+      "id": "AC-003",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "after/AC-003.log",
+      "output": ""
+    },
+    {
+      "id": "AC-004",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "after/AC-004.log",
+      "output": ""
+    },
+    {
+      "id": "AC-005",
+      "rc": 0,
+      "seconds": 0.615,
+      "log": "after/AC-005.log",
+      "output": ""
+    },
+    {
+      "id": "AC-006",
+      "rc": 0,
+      "seconds": 0.565,
+      "log": "after/AC-006.log",
+      "output": ""
+    },
+    {
+      "id": "AC-007",
+      "rc": 0,
+      "seconds": 0.666,
+      "log": "after/AC-007.log",
+      "output": ""
+    },
+    {
+      "id": "AC-008",
+      "rc": 0,
+      "seconds": 1.266,
+      "log": "after/AC-008.log",
+      "output": ""
+    },
+    {
+      "id": "AC-009",
+      "rc": 0,
+      "seconds": 0.016,
+      "log": "after/AC-009.log",
+      "output": ""
+    },
+    {
+      "id": "AC-010",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "after/AC-010.log",
+      "output": ""
+    },
+    {
+      "id": "AC-011",
+      "rc": 0,
+      "seconds": 107.941,
+      "log": "after/AC-011.log",
+      "output": "Original cmd/validatecsr/validatecsr.go sha256: e0f902da15f700de1af4f5bfd55ce46ca2a961e22278aa71f7be8daae5569d6e\nOriginal cmd/validatecsr/validatecsr_test.go sha256: 57a42e04ce60f15f0bc483bb7f9ba56d5ec7315683836e6f2aa9586eb438f4f6\nOriginal pkg/provider/acme/csr.go sha256: 63c801a002f4e3ddb4be6ed63602a24bff9dcac02cf878e85921c6cfc114dbde\nOriginal pkg/provider/acme/csr_test.go sha256: 5b7d75ec14818efa7dafe8914737a30aefb261c1142edcb9fd12c8a4cc9dd7f8\nCountry removed: убит; csr_test.go:34: country missing from signed CSR: []\nRenewal falls back to Renew: убит; csr_test.go:215: renewal fell back to Renew instead of ObtainForCSR\nPrivateKey omitted: убит; csr_test.go:176: obtain CSR request has no private key\nThree-letter country accepted: убит; csr_test.go:123: three-letter country accepted\nEmpty subject selects CSR: убит; csr_test.go:156: empty subject selects CSR path\nDNSNames lost: убит; csr_test.go:50: DNS names lost from signed CSR: []\nIP address sent as DNS SAN: убит; csr_test.go:61: IP and DNS SANs not separated: IP=[] DNS=[203.0.113.10 example.org]\nCommon name length limit removed: убит; csr_test.go:83: 65-byte common name was not omitted: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.org\"\n64-byte common name incorrectly omitted: убит; csr_test.go:80: 64-byte common name omitted: \"\"\nCountry normalization bypassed: убит; csr_test.go:95: country was not uppercased: [ru]\nGuard checks only the first resolver: убит; validatecsr_test.go:50: second resolver was not rejected: <nil>\nGuard always exits zero: убит; validatecsr_test.go:165: invalid subject exit code = 0, want 1; stdout=\"\" stderr=\"{\\\"level\\\":\\\"debug\\\",\\\"time\\\":\\\"2026-09-07T06:38:02Z\\\",\\\"message\\\":\\\"Configuration loaded from flags\\\"}\\ninvalid CSR subject in resolver \\\"nuc\\\": CSR subject country must contain exactly two ASCII letters\\n\"\nGuard stops at a resolver without ACME: убит; validatecsr_test.go:103: resolver after a non-ACME one was not checked: <nil>\nGuard walks resolvers in map order: убит; validatecsr_test.go:63: guard did not report the first resolver in sorted order: invalid CSR subject in resolver \"b-bad\": CSR subject country must contain exactly two ASCII letters\nGuard validates only subjects with a country: убит; validatecsr_test.go:75: subject without a country was not validated: <nil>\nGuard drops a loader from the chain: убит; validatecsr_test.go:85: loader chain resized: got 3, want 4\nGuard error omits resolver name: убит; validatecsr_test.go:39: invalid country error missing resolver or validation reason: invalid CSR subject: CSR subject country must contain exactly two ASCII letters\nУбито 17/17; исходные байты и sha256 всех 4 файлов восстановлены\n"
+    },
+    {
+      "id": "AC-012",
+      "rc": 0,
+      "seconds": 0.008,
+      "log": "after/AC-012.log",
+      "output": ""
+    }
+  ],
+  "mutations": [
+    {
+      "id": "M01",
+      "name": "Сравнивать только первые 8 hex-символов sha256",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "if [ \"$got\" != \"$expected\" ]; then",
+      "after": "if [ \"${got:0:8}\" != \"${expected:0:8}\" ]; then",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "ae66ab8f1438f4e7dc78c97e36473f477a3ef66502f8e204851f1a4a8b18b7ac",
+      "started": "2026-09-07T06:33:37.195373+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M01/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M01/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.004,
+          "log": "M01/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M01/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M01/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.665,
+          "log": "M01/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M01/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M01/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.016,
+          "log": "M01/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -43,7 +43,7 @@\n     local got\n     got=\"$(sha256_of \"$file\")\"\n     expected=\"$(lowercase_hex \"$expected\")\"\n-    if [ \"$got\" != \"$expected\" ]; then\n+    if [ \"${got:0:8}\" != \"${expected:0:8}\" ]; then\n         echo \"sha256 mismatch for $label: got $got, expected $expected (пин не совпал)\" >&2\n         exit 1\n     fi\n"
+    },
+    {
+      "id": "M02",
+      "name": "Переставить корневой и промежуточный пины",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "ROOT_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"\nSUB_SHA256=\"6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e\"",
+      "after": "ROOT_SHA256=\"6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e\"\nSUB_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "feb7bd60d7931c88dfec38aa37b5f4a4ba77b93370e9a10980255ab6f18f3377",
+      "started": "2026-09-07T06:33:41.016463+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M02/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.466,
+          "log": "M02/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.004,
+          "log": "M02/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M02/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 2,
+          "seconds": 0.314,
+          "log": "M02/AC-005.log",
+          "output": "скрипт не собрал бандл\n"
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M02/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 1,
+          "seconds": 0.265,
+          "log": "M02/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M02/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M02/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -12,8 +12,8 @@\n \n ROOT_URL=\"https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt\"\n SUB_URL=\"http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt\"\n-ROOT_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"\n-SUB_SHA256=\"6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e\"\n+ROOT_SHA256=\"6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e\"\n+SUB_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"\n output=\"\"\n \n usage() {\n"
+    },
+    {
+      "id": "M03",
+      "name": "Записать загрузки в цель до проверки пинов",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "require_pin \"$tmpdir/root.crt\" \"$ROOT_SHA256\" \"root CA ($ROOT_URL)\"",
+      "after": "cat \"$tmpdir/root.crt\" \"$tmpdir/sub.crt\" > \"$output\"\nrequire_pin \"$tmpdir/root.crt\" \"$ROOT_SHA256\" \"root CA ($ROOT_URL)\"",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "0d2c9952da43cb2880cfa1b34badda0b2058f084d0179e3d65a53a5a9b1d2148",
+      "started": "2026-09-07T06:33:44.028703+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M03/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M03/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M03/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M03/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M03/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 5,
+          "seconds": 0.314,
+          "log": "M03/AC-006.log",
+          "output": "при отказе по root остался файл назначения\n"
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M03/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.917,
+          "log": "M03/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M03/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -103,6 +103,7 @@\n curl -fsSL --max-time 60 -o \"$tmpdir/root.crt\" \"$ROOT_URL\"\n curl -fsSL --max-time 60 -o \"$tmpdir/sub.crt\" \"$SUB_URL\"\n \n+cat \"$tmpdir/root.crt\" \"$tmpdir/sub.crt\" > \"$output\"\n require_pin \"$tmpdir/root.crt\" \"$ROOT_SHA256\" \"root CA ($ROOT_URL)\"\n require_pin \"$tmpdir/sub.crt\" \"$SUB_SHA256\" \"Sub CA ($SUB_URL)\"\n \n"
+    },
+    {
+      "id": "M04",
+      "name": "Записывать итог напрямую вместо атомарного mv",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "cat \"$tmpdir/bundle.pem\" > \"$staged\"\nchmod 644 \"$staged\"\nmv -f \"$staged\" \"$output\"",
+      "after": "cat \"$tmpdir/bundle.pem\" > \"$output\"\nchmod 644 \"$output\"",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "201f65bfd3bb663a5d91bc60c8b9adcf72513dd13539d9b2b34c6e6eb9f87228",
+      "started": "2026-09-07T06:33:47.846530+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.466,
+          "log": "M04/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M04/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M04/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M04/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M04/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M04/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M04/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M04/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.016,
+          "log": "M04/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -119,6 +119,5 @@\n # filesystem, and $tmpdir usually lives on another one.\n staged=\"$(mktemp \"$parent/.nuc-ca-bundle.XXXXXX\")\"\n trap 'rm -rf \"$tmpdir\"; rm -f \"$staged\"' EXIT\n-cat \"$tmpdir/bundle.pem\" > \"$staged\"\n-chmod 644 \"$staged\"\n-mv -f \"$staged\" \"$output\"\n+cat \"$tmpdir/bundle.pem\" > \"$output\"\n+chmod 644 \"$output\"\n"
+    },
+    {
+      "id": "M05",
+      "name": "Удалить существующий файл назначения перед загрузкой",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "tmpdir=\"$(mktemp -d)\"",
+      "after": "if [ -f \"$output\" ]; then\n    rm -f -- \"$output\"\nfi\ntmpdir=\"$(mktemp -d)\"",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "3ba2df06374c8a8f574c3a4d04e9c16622dba147d4f86cb14543cd5b8c193445",
+      "started": "2026-09-07T06:33:51.371453+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M05/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M05/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M05/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M05/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M05/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M05/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M05/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M05/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M05/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -97,6 +97,9 @@\n     exit 2\n fi\n \n+if [ -f \"$output\" ]; then\n+    rm -f -- \"$output\"\n+fi\n tmpdir=\"$(mktemp -d)\"\n trap 'rm -rf \"$tmpdir\"' EXIT\n \n"
+    },
+    {
+      "id": "M06",
+      "name": "Забыть уборку каталога загрузок при успешном завершении",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "trap 'rm -rf \"$tmpdir\"; rm -f \"$staged\"' EXIT",
+      "after": "trap 'rm -f \"$staged\"' EXIT",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "51e1c51e4a6157a7cc5980ec602faac69ed84413b0368d8ad2cf5ea193a827cd",
+      "started": "2026-09-07T06:33:55.088553+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M06/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M06/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M06/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M06/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M06/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M06/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M06/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M06/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M06/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -118,7 +118,7 @@\n # Stage the final file next to its destination: mv is only atomic within one\n # filesystem, and $tmpdir usually lives on another one.\n staged=\"$(mktemp \"$parent/.nuc-ca-bundle.XXXXXX\")\"\n-trap 'rm -rf \"$tmpdir\"; rm -f \"$staged\"' EXIT\n+trap 'rm -f \"$staged\"' EXIT\n cat \"$tmpdir/bundle.pem\" > \"$staged\"\n chmod 644 \"$staged\"\n mv -f \"$staged\" \"$output\"\n"
+    },
+    {
+      "id": "M07",
+      "name": "Склеить два корня вместо корня и Sub CA",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "cat \"$tmpdir/root.pem\" \"$tmpdir/sub.pem\" > \"$tmpdir/bundle.pem\"",
+      "after": "cat \"$tmpdir/root.pem\" \"$tmpdir/root.pem\" > \"$tmpdir/bundle.pem\"",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "b452cedc3a5dbb4ff1fc751ed9b1d44e8b47b452bfb917f7d59ab0678c1d06e7",
+      "started": "2026-09-07T06:33:58.754745+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M07/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M07/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M07/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M07/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 4,
+          "seconds": 0.464,
+          "log": "M07/AC-005.log",
+          "output": "TLS не проверился: ssl_verify_result=20\n"
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M07/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M07/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M07/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M07/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -111,7 +111,7 @@\n pem_from \"$tmpdir/root.crt\" \"$tmpdir/root.pem\" \"root CA\"\n pem_from \"$tmpdir/sub.crt\" \"$tmpdir/sub.pem\" \"Sub CA\"\n \n-cat \"$tmpdir/root.pem\" \"$tmpdir/sub.pem\" > \"$tmpdir/bundle.pem\"\n+cat \"$tmpdir/root.pem\" \"$tmpdir/root.pem\" > \"$tmpdir/bundle.pem\"\n \n parent=\"$(dirname \"$output\")\"\n mkdir -p \"$parent\"\n"
+    },
+    {
+      "id": "M08",
+      "name": "Опечатка directroy в URL ACME",
+      "file": "presets/nuc.yml",
+      "before": "caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directory",
+      "after": "caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directroy",
+      "matches": 1,
+      "original_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "mutated_sha256": "fc5d03b9f8d43aaaf19eb58a104d5c87537de9b7dc475b69fa4c04e2ad22201e",
+      "started": "2026-09-07T06:34:02.321183+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.414,
+          "log": "M08/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M08/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 3,
+          "seconds": 0.008,
+          "log": "M08/AC-003.log",
+          "output": "caServer не тот, что проверен\n"
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M08/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M08/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M08/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M08/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M08/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M08/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "diff": "--- presets/nuc.yml\n+++ presets/nuc.yml\n@@ -18,7 +18,7 @@\n     acme:\n       # RFC 8555 directory, verified HTTP 200 on 2026-09-07.\n       # meta is null; EAB is not required (lego treats JSON null as a zero Meta).\n-      caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directory\n+      caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directroy\n       # ASSUMPTION, not a measured fact: public НУЦ docs talk about RSA DV.\n       # Whether the CA rejects EC keys has not been checked (no accreditation).\n       keyType: RSA2048\n"
+    },
+    {
+      "id": "M09",
+      "name": "Выбрать EC256 вместо RSA2048",
+      "file": "presets/nuc.yml",
+      "before": "keyType: RSA2048",
+      "after": "keyType: EC256",
+      "matches": 1,
+      "original_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "mutated_sha256": "bdf03f2ae435feb2ae3948d6e19dc4fb494e3ac276577188c4979568dc63b4dd",
+      "started": "2026-09-07T06:34:05.837568+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M09/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M09/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.004,
+          "log": "M09/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 3,
+          "seconds": 0.003,
+          "log": "M09/AC-004.log",
+          "output": "нет keyType RSA2048\n"
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M09/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M09/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M09/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M09/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M09/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "diff": "--- presets/nuc.yml\n+++ presets/nuc.yml\n@@ -21,7 +21,7 @@\n       caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directory\n       # ASSUMPTION, not a measured fact: public НУЦ docs talk about RSA DV.\n       # Whether the CA rejects EC keys has not been checked (no accreditation).\n-      keyType: RSA2048\n+      keyType: EC256\n       # REPLACE-ME: contact email used for the ACME account.\n       email: \"replace-me@example.com\"\n       # REPLACE-ME: path inside the container; mount a writable volume here.\n"
+    },
+    {
+      "id": "M10",
+      "name": "Указать страну ru в нижнем регистре",
+      "file": "presets/nuc.yml",
+      "before": "country: RU\n",
+      "after": "country: ru\n",
+      "matches": 1,
+      "original_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "mutated_sha256": "c3af88a6bfad640411433f8fb4ae7027726e262458f3b9e7a6c2f718b6f74d15",
+      "started": "2026-09-07T06:34:09.595330+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.464,
+          "log": "M10/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 3,
+          "seconds": 0.464,
+          "log": "M10/AC-002.log",
+          "output": "нет ожидаемой причины: csrSubject OK\n"
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.004,
+          "log": "M10/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 4,
+          "seconds": 0.008,
+          "log": "M10/AC-004.log",
+          "output": "нет country RU\n"
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.665,
+          "log": "M10/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M10/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M10/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M10/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.016,
+          "log": "M10/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "diff": "--- presets/nuc.yml\n+++ presets/nuc.yml\n@@ -36,7 +36,7 @@\n         entryPoint: web\n       csrSubject:\n         # Required by НУЦ (the reason this patch exists). Do not change.\n-        country: RU\n+        country: ru\n         # REPLACE-ME: your organization. Example only.\n         organization: \"Example LLC\"\n         # REPLACE-ME: your locality. Example only.\n"
+    },
+    {
+      "id": "M11",
+      "name": "Разойтись с README в пути caCertificates",
+      "file": "presets/nuc.yml",
+      "before": "- /etc/traefik/ca/nuc-ca.pem",
+      "after": "- /etc/traefik/ca/nuc.pem",
+      "matches": 1,
+      "original_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "mutated_sha256": "22d40fac62800c85a1c84f7398cbd43c660e61f99339d9baa22aee6145e27ec0",
+      "started": "2026-09-07T06:34:13.367047+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M11/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M11/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M11/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M11/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M11/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M11/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M11/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M11/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M11/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "diff": "--- presets/nuc.yml\n+++ presets/nuc.yml\n@@ -31,7 +31,7 @@\n       # (2022 → 2024), and a baked-in copy would fail the handshake with no\n       # hint that the file inside the image had gone stale.\n       caCertificates:\n-        - /etc/traefik/ca/nuc-ca.pem\n+        - /etc/traefik/ca/nuc.pem\n       httpChallenge:\n         entryPoint: web\n       csrSubject:\n"
+    },
+    {
+      "id": "M12",
+      "name": "Указать отсутствующий entryPoint для HTTP challenge",
+      "file": "presets/nuc.yml",
+      "before": "entryPoint: web\n",
+      "after": "entryPoint: http\n",
+      "matches": 1,
+      "original_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "mutated_sha256": "5bb33244f27672240f5459aac2983539623535ecc14669007c5210ae8d0015bf",
+      "started": "2026-09-07T06:34:16.932733+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M12/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M12/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.004,
+          "log": "M12/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.007,
+          "log": "M12/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M12/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M12/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M12/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M12/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M12/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "3975aaf2b4b7613f5ba5adf6c5bedb35b27919d264bea2197211011de00b17e2",
+      "diff": "--- presets/nuc.yml\n+++ presets/nuc.yml\n@@ -33,7 +33,7 @@\n       caCertificates:\n         - /etc/traefik/ca/nuc-ca.pem\n       httpChallenge:\n-        entryPoint: web\n+        entryPoint: http\n       csrSubject:\n         # Required by НУЦ (the reason this patch exists). Do not change.\n         country: RU\n"
+    },
+    {
+      "id": "M13",
+      "name": "Смонтировать бандл из README в другой путь контейнера",
+      "file": "README.md",
+      "before": "$PWD/nuc-ca.pem:/etc/traefik/ca/nuc-ca.pem:ro",
+      "after": "$PWD/nuc-ca.pem:/etc/traefik/ca/ca.pem:ro",
+      "matches": 1,
+      "original_sha256": "ce4fe23dd522714739cd3e1c74d2bc1d6cf51d0afbbad6e8f7a4f3475d5a3db5",
+      "mutated_sha256": "f6d9b640596363dec020dc26afbd46e49a05d952bbe8e4ea5f2d2ae72c649090",
+      "started": "2026-09-07T06:34:20.444305+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M13/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M13/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M13/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M13/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.515,
+          "log": "M13/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M13/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M13/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M13/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M13/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "ce4fe23dd522714739cd3e1c74d2bc1d6cf51d0afbbad6e8f7a4f3475d5a3db5",
+      "diff": "--- README.md\n+++ README.md\n@@ -89,7 +89,7 @@\n docker build -t traefik-nuc-acme:3.7.13-nuc.1 -f Dockerfile .\n docker run --rm \\\n   -v \"$PWD/presets/nuc.yml:/etc/traefik/traefik.yml:ro\" \\\n-  -v \"$PWD/nuc-ca.pem:/etc/traefik/ca/nuc-ca.pem:ro\" \\\n+  -v \"$PWD/nuc-ca.pem:/etc/traefik/ca/ca.pem:ro\" \\\n   -v acme-data:/data \\\n   -p 80:80 -p 443:443 \\\n   traefik-nuc-acme:3.7.13-nuc.1\n"
+    },
+    {
+      "id": "M14",
+      "name": "Потерять кавычки при передаче аргументов в run",
+      "file": "scripts/upstream-go.sh",
+      "before": "exec \"$bin\" \"$@\"",
+      "after": "exec \"$bin\" $@",
+      "matches": 1,
+      "original_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff",
+      "mutated_sha256": "fd77a43da693d13b6ed572a22d25a2ac3ab82604eb2a1ebe753a6f7607c4c06c",
+      "started": "2026-09-07T06:34:24.010170+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.414,
+          "log": "M14/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.466,
+          "log": "M14/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M14/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.016,
+          "log": "M14/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M14/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M14/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.665,
+          "log": "M14/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.915,
+          "log": "M14/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M14/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "выжила",
+      "restored_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff",
+      "diff": "--- scripts/upstream-go.sh\n+++ scripts/upstream-go.sh\n@@ -40,7 +40,7 @@\n     mkdir -p \"$root/.runbin\"\n     bin=\"$root/.runbin/$(basename \"$pkg\")\"\n     go -C \"$upstream\" build -o \"$bin\" \"$pkg\"\n-    exec \"$bin\" \"$@\"\n+    exec \"$bin\" $@\n fi\n \n exec go -C \"$upstream\" \"$@\"\n"
+    },
+    {
+      "id": "M15",
+      "name": "Вернуть ноль после ошибки дочернего процесса run",
+      "file": "scripts/upstream-go.sh",
+      "before": "exec \"$bin\" \"$@\"",
+      "after": "\"$bin\" \"$@\" || true\n    exit 0",
+      "matches": 1,
+      "original_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff",
+      "mutated_sha256": "d1f54383710e8fab55e3ac94b2760a4059420b4379c8e0763f31dca7d263c809",
+      "started": "2026-09-07T06:34:27.634249+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M15/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 4,
+          "seconds": 0.465,
+          "log": "M15/AC-002.log",
+          "output": "испорченный пресет принят\n"
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M15/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M15/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M15/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M15/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.615,
+          "log": "M15/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.916,
+          "log": "M15/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M15/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff",
+      "diff": "--- scripts/upstream-go.sh\n+++ scripts/upstream-go.sh\n@@ -40,7 +40,8 @@\n     mkdir -p \"$root/.runbin\"\n     bin=\"$root/.runbin/$(basename \"$pkg\")\"\n     go -C \"$upstream\" build -o \"$bin\" \"$pkg\"\n-    exec \"$bin\" \"$@\"\n+    \"$bin\" \"$@\" || true\n+    exit 0\n fi\n \n exec go -C \"$upstream\" \"$@\"\n"
+    },
+    {
+      "id": "M16",
+      "name": "Собирать библиотечный cmd/validatecsr вместо переданного пакета",
+      "file": "scripts/upstream-go.sh",
+      "before": "go -C \"$upstream\" build -o \"$bin\" \"$pkg\"",
+      "after": "go -C \"$upstream\" build -o \"$bin\" ./cmd/validatecsr",
+      "matches": 1,
+      "original_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff",
+      "mutated_sha256": "8926dd28186df9f6d38ca846b8bbf619696a7b085418f1d878c9218ce83e1c4c",
+      "started": "2026-09-07T06:34:31.198875+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 3,
+          "seconds": 0.364,
+          "log": "M16/AC-001.log",
+          "output": "гвард отверг пресет: scripts/upstream-go.sh: line 43: /home/deploy/exec-clones/traefik-nuc-m4-cross/.runbin/traefik: Permission denied\n"
+        },
+        {
+          "id": "AC-002",
+          "rc": 3,
+          "seconds": 0.365,
+          "log": "M16/AC-002.log",
+          "output": "нет ожидаемой причины: scripts/upstream-go.sh: line 43: /home/deploy/exec-clones/traefik-nuc-m4-cross/.runbin/traefik: Permission denied\n"
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M16/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M16/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M16/AC-005.log",
+          "output": ""
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.565,
+          "log": "M16/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.716,
+          "log": "M16/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 0.966,
+          "log": "M16/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M16/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff",
+      "diff": "--- scripts/upstream-go.sh\n+++ scripts/upstream-go.sh\n@@ -39,7 +39,7 @@\n     # toolchain, and a stray binary in it is confusing at best.\n     mkdir -p \"$root/.runbin\"\n     bin=\"$root/.runbin/$(basename \"$pkg\")\"\n-    go -C \"$upstream\" build -o \"$bin\" \"$pkg\"\n+    go -C \"$upstream\" build -o \"$bin\" ./cmd/validatecsr\n     exec \"$bin\" \"$@\"\n fi\n \n"
+    },
+    {
+      "id": "M17",
+      "name": "Выбрать Sub CA 2022 года вместе с его правильным пином",
+      "file": "scripts/nuc-ca-bundle.sh",
+      "before": "SUB_URL=\"http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt\"\nROOT_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"\nSUB_SHA256=\"6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e\"",
+      "after": "SUB_URL=\"https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt\"\nROOT_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"\nSUB_SHA256=\"f0ae589f36774f29ef3648f7984b08d42fcce6f1ffeeb6236d773daeb2744ea6\"",
+      "matches": 1,
+      "original_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "mutated_sha256": "018c77ff9986f0f491643eeedac715e8c8274f74e4b549ea313d28f28367614e",
+      "started": "2026-09-07T06:34:34.764714+00:00",
+      "criteria": [
+        {
+          "id": "AC-001",
+          "rc": 0,
+          "seconds": 7.479,
+          "log": "M17/AC-001.log",
+          "output": ""
+        },
+        {
+          "id": "AC-002",
+          "rc": 0,
+          "seconds": 0.465,
+          "log": "M17/AC-002.log",
+          "output": ""
+        },
+        {
+          "id": "AC-003",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M17/AC-003.log",
+          "output": ""
+        },
+        {
+          "id": "AC-004",
+          "rc": 0,
+          "seconds": 0.008,
+          "log": "M17/AC-004.log",
+          "output": ""
+        },
+        {
+          "id": "AC-005",
+          "rc": 4,
+          "seconds": 0.565,
+          "log": "M17/AC-005.log",
+          "output": "TLS не проверился: ssl_verify_result=20\n"
+        },
+        {
+          "id": "AC-006",
+          "rc": 0,
+          "seconds": 0.665,
+          "log": "M17/AC-006.log",
+          "output": ""
+        },
+        {
+          "id": "AC-007",
+          "rc": 0,
+          "seconds": 0.765,
+          "log": "M17/AC-007.log",
+          "output": ""
+        },
+        {
+          "id": "AC-008",
+          "rc": 0,
+          "seconds": 1.016,
+          "log": "M17/AC-008.log",
+          "output": ""
+        },
+        {
+          "id": "AC-009",
+          "rc": 0,
+          "seconds": 0.016,
+          "log": "M17/AC-009.log",
+          "output": ""
+        }
+      ],
+      "verdict": "убита",
+      "restored_sha256": "8834b35f831c35a07a3c4f7329a94e64059209f73d1d596cbe0c30126494872e",
+      "diff": "--- scripts/nuc-ca-bundle.sh\n+++ scripts/nuc-ca-bundle.sh\n@@ -11,9 +11,9 @@\n set -euo pipefail\n \n ROOT_URL=\"https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt\"\n-SUB_URL=\"http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt\"\n+SUB_URL=\"https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt\"\n ROOT_SHA256=\"936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504\"\n-SUB_SHA256=\"6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e\"\n+SUB_SHA256=\"f0ae589f36774f29ef3648f7984b08d42fcce6f1ffeeb6236d773daeb2744ea6\"\n output=\"\"\n \n usage() {\n"
+    }
+  ],
+  "probes": [
+    {
+      "name": "pin-root-baseline",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/baseline.sh",
+        "--root-sha256",
+        "936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6500",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/pin-root-baseline.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "sha256 mismatch for root CA (https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt): got 936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504, expected 936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6500 (пин не совпал)\n",
+      "wrong_pin": "936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6500",
+      "destination_exists": false
+    },
+    {
+      "name": "pin-root-M01",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M01.sh",
+        "--root-sha256",
+        "936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6500",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/pin-root-M01.pem"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "wrong_pin": "936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6500",
+      "destination_exists": true
+    },
+    {
+      "name": "pin-sub-baseline",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/baseline.sh",
+        "--sub-sha256",
+        "6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac41930",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/pin-sub-baseline.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "sha256 mismatch for Sub CA (http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt): got 6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e, expected 6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac41930 (пин не совпал)\n",
+      "wrong_pin": "6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac41930",
+      "destination_exists": false
+    },
+    {
+      "name": "pin-sub-M01",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M01.sh",
+        "--sub-sha256",
+        "6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac41930",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/pin-sub-M01.pem"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "wrong_pin": "6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac41930",
+      "destination_exists": true
+    },
+    {
+      "name": "existing-baseline",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/baseline.sh",
+        "--sub-sha256",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/existing-baseline.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "sha256 mismatch for Sub CA (http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt): got 6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e, expected 0000000000000000000000000000000000000000000000000000000000000000 (пин не совпал)\n",
+      "destination_exists": true,
+      "destination_preserved": true
+    },
+    {
+      "name": "existing-M05",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M05.sh",
+        "--sub-sha256",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/existing-M05.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "sha256 mismatch for Sub CA (http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt): got 6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e, expected 0000000000000000000000000000000000000000000000000000000000000000 (пин не совпал)\n",
+      "destination_exists": false,
+      "destination_preserved": false
+    },
+    {
+      "name": "cleanup-baseline",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/baseline.sh",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/cleanup-baseline.pem"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "tmpdir_children": []
+    },
+    {
+      "name": "cleanup-M06",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M06.sh",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/cleanup-M06.pem"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": "",
+      "tmpdir_children": [
+        "tmp.rZ4JuhG9iX",
+        "tmp.rZ4JuhG9iX/bundle.pem",
+        "tmp.rZ4JuhG9iX/openssl.err",
+        "tmp.rZ4JuhG9iX/root.crt",
+        "tmp.rZ4JuhG9iX/root.pem",
+        "tmp.rZ4JuhG9iX/sub.crt",
+        "tmp.rZ4JuhG9iX/sub.pem"
+      ]
+    },
+    {
+      "name": "atomic-baseline",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/baseline.sh",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/atomic-baseline.pem"
+      ],
+      "rc": 73,
+      "stdout": "",
+      "stderr": "",
+      "injection": "cat of */bundle.pem writes 32 bytes and exits 73; all other cat calls delegate to system cat",
+      "destination_preserved": true,
+      "destination_text": "EXISTING DESTINATION MUST SURVIVE\n"
+    },
+    {
+      "name": "atomic-M04",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M04.sh",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/atomic-M04.pem"
+      ],
+      "rc": 73,
+      "stdout": "",
+      "stderr": "",
+      "injection": "cat of */bundle.pem writes 32 bytes and exits 73; all other cat calls delegate to system cat",
+      "destination_preserved": false,
+      "destination_text": "-----BEGIN CERTIFICATE-----\nMIIF"
+    },
+    {
+      "name": "argument-spaces-baseline",
+      "argv": [
+        "bash",
+        "/home/deploy/exec-clones/traefik-nuc-m4-cross/.runbin/m4-review-probe-baseline.sh",
+        "run",
+        "./cmd/traefik",
+        "validate-csr-subject",
+        "--configfile=/tmp/m4-cross-campaign-7g3v0nqv/probes/config with spaces.yml"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "invalid CSR subject in resolver \"nuc\": CSR subject country must contain exactly two ASCII letters\n",
+      "script_sha256": "48654d9b333006ad03690a22b650303863639ecbbc50cd6b678feed71f66a8ff"
+    },
+    {
+      "name": "argument-spaces-M14",
+      "argv": [
+        "bash",
+        "/home/deploy/exec-clones/traefik-nuc-m4-cross/.runbin/m4-review-probe-M14.sh",
+        "run",
+        "./cmd/traefik",
+        "validate-csr-subject",
+        "--configfile=/tmp/m4-cross-campaign-7g3v0nqv/probes/config with spaces.yml"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "{\"level\":\"error\",\"error\":\"command validate-csr-subject error: failed to decode configuration from flags: field not found, node: configfile\",\"time\":\"2026-09-07T06:36:05Z\",\"message\":\"Command error\"}\n",
+      "script_sha256": "fd77a43da693d13b6ed572a22d25a2ac3ab82604eb2a1ebe753a6f7607c4c06c"
+    },
+    {
+      "name": "mount-baseline",
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/bin/sh",
+        "-v",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/bundle.pem:/etc/traefik/ca/nuc-ca.pem:ro",
+        "traefik-nuc-acme:m4",
+        "-c",
+        "test -r \"$1\"",
+        "sh",
+        "/etc/traefik/ca/nuc-ca.pem"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "mount-M11",
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/bin/sh",
+        "-v",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/bundle.pem:/etc/traefik/ca/nuc-ca.pem:ro",
+        "traefik-nuc-acme:m4",
+        "-c",
+        "test -r \"$1\"",
+        "sh",
+        "/etc/traefik/ca/nuc.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "mount-M13",
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/bin/sh",
+        "-v",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/bundle.pem:/etc/traefik/ca/ca.pem:ro",
+        "traefik-nuc-acme:m4",
+        "-c",
+        "test -r \"$1\"",
+        "sh",
+        "/etc/traefik/ca/nuc-ca.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "swapped-pins-M02",
+      "argv": [
+        "bash",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M02.sh",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/probes/M02.pem"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "sha256 mismatch for root CA (https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt): got 936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504, expected 6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e (пин не совпал)\n"
+    }
+  ],
+  "tls": [
+    {
+      "argv": [
+        "curl",
+        "-fsSL",
+        "--max-time",
+        "60",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/root.pem",
+        "https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "openssl",
+        "x509",
+        "-in",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/root.pem",
+        "-noout",
+        "-serial",
+        "-dates",
+        "-ext",
+        "subjectKeyIdentifier"
+      ],
+      "rc": 0,
+      "stdout": "serial=1000\nnotBefore=Mar  1 21:04:15 2022 GMT\nnotAfter=Feb 27 21:04:15 2032 GMT\nX509v3 Subject Key Identifier: \n    E1:D1:81:E5:CE:5A:5F:04:AA:D2:E9:B6:9D:66:B1:C5:FA:AC:2C:87\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "curl",
+        "-fsSL",
+        "--max-time",
+        "60",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/old-sub.pem",
+        "https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "openssl",
+        "x509",
+        "-in",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/old-sub.pem",
+        "-noout",
+        "-serial",
+        "-dates",
+        "-ext",
+        "subjectKeyIdentifier"
+      ],
+      "rc": 0,
+      "stdout": "serial=1002\nnotBefore=Mar  2 11:25:19 2022 GMT\nnotAfter=Mar  6 11:25:19 2027 GMT\nX509v3 Subject Key Identifier: \n    D1:E1:71:0D:0B:2D:81:4E:6E:8A:4A:8F:4C:23:B3:4C:5E:AB:69:0B\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "curl",
+        "-fsSL",
+        "--max-time",
+        "60",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/sub.pem",
+        "http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "openssl",
+        "x509",
+        "-in",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/sub.pem",
+        "-noout",
+        "-serial",
+        "-dates",
+        "-ext",
+        "subjectKeyIdentifier"
+      ],
+      "rc": 0,
+      "stdout": "serial=1005\nnotBefore=Jul 15 12:50:41 2024 GMT\nnotAfter=Jul 19 12:50:41 2029 GMT\nX509v3 Subject Key Identifier: \n    77:3D:D9:39:AF:42:BD:DC:5B:CA:76:EA:EE:FD:CE:3E:61:29:30:5F\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "openssl",
+        "s_client",
+        "-connect",
+        "nuc-acme.voskhod.ru:443",
+        "-servername",
+        "nuc-acme.voskhod.ru",
+        "-showcerts"
+      ],
+      "rc": 0,
+      "stdout": "Full public certificate/handshake retained in the local run directory; certificate extensions are recorded in subsequent commands.",
+      "stderr": "Connecting to 185.194.32.238\ndepth=0 CN=nuc-acme.voskhod.ru, O=Минцифры России, C=RU, ST=77 г.Москва, L=г. Москва, street=Пресненский, наб. Пресненская, д. 10, стр. 2, 1.2.643.100.4=7710474375, OGRN=1047702026701\nverify error:num=20:unable to get local issuer certificate\nverify return:1\ndepth=0 CN=nuc-acme.voskhod.ru, O=Минцифры России, C=RU, ST=77 г.Москва, L=г. Москва, street=Пресненский, наб. Пресненская, д. 10, стр. 2, 1.2.643.100.4=7710474375, OGRN=1047702026701\nverify error:num=21:unable to verify the first certificate\nverify return:1\ndepth=0 CN=nuc-acme.voskhod.ru, O=Минцифры России, C=RU, ST=77 г.Москва, L=г. Москва, street=Пресненский, наб. Пресненская, д. 10, стр. 2, 1.2.643.100.4=7710474375, OGRN=1047702026701\nverify return:1\nDONE\n",
+      "certificates_sent": 1
+    },
+    {
+      "argv": [
+        "openssl",
+        "x509",
+        "-in",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/leaf.pem",
+        "-noout",
+        "-serial",
+        "-dates",
+        "-ext",
+        "authorityKeyIdentifier"
+      ],
+      "rc": 0,
+      "stdout": "serial=44EE059130D849C4861CB2CEA1408050\nnotBefore=Dec 12 13:26:08 2025 GMT\nnotAfter=Dec 12 13:26:08 2026 GMT\nX509v3 Authority Key Identifier: \n    77:3D:D9:39:AF:42:BD:DC:5B:CA:76:EA:EE:FD:CE:3E:61:29:30:5F\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "openssl",
+        "x509",
+        "-in",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/leaf.pem",
+        "-noout",
+        "-ext",
+        "authorityInfoAccess"
+      ],
+      "rc": 0,
+      "stdout": "Authority Information Access: \n    CA Issuers - URI:http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt\n    CA Issuers - URI:http://nuc-cdp.digital.gov.ru/cdp/subca_ssl_rsa2024.crt\n    OCSP - URI:http://nuc-ocsp.voskhod.ru\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "scripts/nuc-ca-bundle.sh",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/bundle.pem"
+      ],
+      "rc": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "curl",
+        "-sS",
+        "--max-time",
+        "60",
+        "--cacert",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/root.pem",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/root-directory.json",
+        "-w",
+        "ssl_verify_result=%{ssl_verify_result} http_code=%{http_code}\n",
+        "https://nuc-acme.voskhod.ru/acme/api/v1/directory"
+      ],
+      "rc": 60,
+      "stdout": "ssl_verify_result=20 http_code=000\n",
+      "stderr": "curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)\nMore details here: https://curl.se/docs/sslcerts.html\n\ncurl failed to verify the legitimacy of the server and therefore could not\nestablish a secure connection to it. To learn more about this situation and\nhow to fix it, please visit the webpage mentioned above.\n"
+    },
+    {
+      "argv": [
+        "curl",
+        "-sS",
+        "--max-time",
+        "60",
+        "--cacert",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/bundle.pem",
+        "-o",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/bundle-directory.json",
+        "-w",
+        "ssl_verify_result=%{ssl_verify_result} http_code=%{http_code}\n",
+        "https://nuc-acme.voskhod.ru/acme/api/v1/directory"
+      ],
+      "rc": 0,
+      "stdout": "ssl_verify_result=0 http_code=200\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "openssl",
+        "verify",
+        "-CAfile",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/root.pem",
+        "-untrusted",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/old-sub.pem",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/leaf.pem"
+      ],
+      "rc": 2,
+      "stdout": "",
+      "stderr": "CN=nuc-acme.voskhod.ru, O=Минцифры России, C=RU, ST=77 г.Москва, L=г. Москва, street=Пресненский, наб. Пресненская, д. 10, стр. 2, 1.2.643.100.4=7710474375, OGRN=1047702026701\nerror 20 at 0 depth lookup: unable to get local issuer certificate\nerror /tmp/m4-cross-campaign-7g3v0nqv/tls/leaf.pem: verification failed\n"
+    },
+    {
+      "argv": [
+        "openssl",
+        "verify",
+        "-CAfile",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/root.pem",
+        "-untrusted",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/sub.pem",
+        "/tmp/m4-cross-campaign-7g3v0nqv/tls/leaf.pem"
+      ],
+      "rc": 0,
+      "stdout": "/tmp/m4-cross-campaign-7g3v0nqv/tls/leaf.pem: OK\n",
+      "stderr": ""
+    }
+  ],
+  "note": "Criterion commands were executed verbatim. Supplementary probes do not determine mutation verdicts. No live issuance or renewal was attempted.",
+  "tls_file_sha256": {
+    "bundle.pem": "4ab21fc3f37793557c69279432f5def448acbd8aaf578e1112a40aa5773cbd89",
+    "leaf.pem": "d9ad5b45d4ebd8addfa839220db18bf560f119db42acba20b3946b5f7e8e5d51",
+    "sub.pem": "6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e",
+    "old-sub.pem": "f0ae589f36774f29ef3648f7984b08d42fcce6f1ffeeb6236d773daeb2744ea6",
+    "root.pem": "936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504"
+  }
+}

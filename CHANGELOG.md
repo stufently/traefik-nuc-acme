@@ -2,6 +2,9 @@
 
 ## 2026-09-07
 
+- Added `README.ru.md`, a complete Russian translation with unchanged code
+  blocks, reciprocal README links, and the НУЦ access and accreditation caveat.
+
 - Added `COMPATIBILITY.md`: the patch applies to Traefik v3.7.13 and to none of
   the other fourteen releases tested. Before v3.7.13 the renewal hunk has no
   `EnableCommonName` in `RenewOptions` to anchor on; before v3.7.6 Traefik has

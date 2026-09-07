@@ -35,8 +35,10 @@ if [ "${1:-}" = "run" ]; then
         exit 2
     fi
     shift
-    mkdir -p "$root/.gocache"
-    bin="$root/.gocache/upstream-run-bin"
+    # Keep build output out of GOCACHE: that directory belongs to the Go
+    # toolchain, and a stray binary in it is confusing at best.
+    mkdir -p "$root/.runbin"
+    bin="$root/.runbin/$(basename "$pkg")"
     go -C "$upstream" build -o "$bin" "$pkg"
     exec "$bin" "$@"
 fi

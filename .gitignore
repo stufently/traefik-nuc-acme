@@ -6,6 +6,7 @@
 # Vendored toolchains for sandboxed executors.
 .toolchain/
 dist/
+.runbin/
 *.tar.gz
 # Executor run artefacts: they describe one run, not the product.
 report.json

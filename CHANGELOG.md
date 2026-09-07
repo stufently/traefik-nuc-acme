@@ -2,6 +2,14 @@
 
 ## 2026-09-07
 
+- The mutation gate now refuses to start when another gate is already running in
+  the clone, or when the upstream tree does not match the committed patch. Two
+  concurrent gates cement a mutation: the second snapshots an already-mutated
+  file as its "original" and restores the tree to it.
+- `scripts/nuc-ca-bundle.sh` stages the bundle next to its destination, so the
+  final move is a rename within one filesystem, as the usage text promises.
+- `scripts/upstream-go.sh run` builds into `.runbin/` instead of `GOCACHE`.
+
 - Added a НУЦ static-config preset (`presets/nuc.yml`) with the verified ACME
   directory URL, `keyType: RSA2048` (assumption), `csrSubject.country: RU`, and
   a mount path for the CA bundle. Live issuance against НУЦ is UNVERIFIED.

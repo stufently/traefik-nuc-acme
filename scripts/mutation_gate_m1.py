@@ -6,6 +6,7 @@ A compiler error, unrelated assertion, absent test, or timeout is not a kill.
 """
 
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import json
 from pathlib import Path
@@ -19,6 +20,8 @@ UPSTREAM = ROOT / ".upstream/traefik"
 SOURCE = UPSTREAM / "pkg/provider/acme/csr.go"
 TESTS = UPSTREAM / "pkg/provider/acme/csr_test.go"
 PACKAGE = "github.com/traefik/traefik/v3/pkg/provider/acme"
+PATCH = ROOT / "patches/0001-csr-subject.patch"
+LOCK = ROOT / ".upstream/.mutation-gate.lock"
 
 
 @dataclass(frozen=True)
@@ -215,7 +218,30 @@ def first_assertion(events):
     return None, None, None, "нет упавшей строки ассерта"
 
 
+def take_lock():
+    """Two gates at once cement a mutation: the second snapshots a mutated file
+    as its "original" and restores the tree to it. Refuse instead of racing."""
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    handle = LOCK.open("w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        sys.exit("another mutation gate is already running in this clone")
+    return handle
+
+
+def check_baseline():
+    """The snapshot is only trustworthy if the tree still matches the patch."""
+    diff = subprocess.run(["git", "-C", str(UPSTREAM), "diff"],
+                          stdout=subprocess.PIPE, text=True, timeout=120).stdout
+    if diff != PATCH.read_text():
+        sys.exit(f"upstream tree does not match {PATCH.relative_to(ROOT)}; "
+                 "restore it before running the gate")
+
+
 def main():
+    lock = take_lock()
+    check_baseline()
     paths = {path for mutation in MUTATIONS for path in (mutation.source, mutation.tests)}
     originals = {path: path.read_bytes() for path in paths}
     hashes = {path: digest(data) for path, data in originals.items()}

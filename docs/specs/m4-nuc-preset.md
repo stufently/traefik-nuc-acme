@@ -119,8 +119,12 @@ Go зови ТОЛЬКО через `scripts/upstream-go.sh` (офлайн-кэ�
   `bash -c 'grep -qE "^ *keyType: RSA2048" presets/nuc.yml || { echo "нет keyType RSA2048" >&2; exit 3; }; grep -qE "^ *country: RU$" presets/nuc.yml || { echo "нет country RU" >&2; exit 4; }'`
 - **AC-005** — 🚩 бандл собирается и ДЕЙСТВИТЕЛЬНО валидирует живой TLS НУЦ:
   `bash -c 'd=$(mktemp -d); scripts/nuc-ca-bundle.sh -o "$d/ca.pem" >/dev/null 2>&1 || { echo "скрипт не собрал бандл" >&2; exit 2; }; n=$(grep -c "BEGIN CERTIFICATE" "$d/ca.pem"); [ "$n" -eq 2 ] || { echo "в бандле $n сертификатов, нужно 2" >&2; exit 3; }; v=$(curl -sS --cacert "$d/ca.pem" -o "$d/dir.json" -w "%{ssl_verify_result}" https://nuc-acme.voskhod.ru/acme/api/v1/directory 2>/dev/null); [ "$v" = "0" ] || { echo "TLS не проверился: ssl_verify_result=$v" >&2; exit 4; }; grep -q "newOrder" "$d/dir.json" || { echo "директория не получена" >&2; exit 5; }'`
-- **AC-006** — 🚩 скрипт ОТКАЗЫВАЕТ на неверном пине и не оставляет файла:
-  `bash -c 'd=$(mktemp -d); out=$(scripts/nuc-ca-bundle.sh --root-sha256 0000000000000000000000000000000000000000000000000000000000000000 -o "$d/ca.pem" 2>&1); rc=$?; [ "$rc" -ne 0 ] || { echo "неверный пин принят" >&2; exit 3; }; printf "%s\n" "$out" | grep -qiE "sha256|пин|checksum" || { printf "отказ без внятной причины: %s\n" "$out" >&2; exit 4; }; [ ! -e "$d/ca.pem" ] || { echo "при отказе остался файл назначения" >&2; exit 5; }'`
+- **AC-006** — 🚩 скрипт ОТКАЗЫВАЕТ на неверном пине — на ОБОИХ, по очереди — и
+  не оставляет ни файла назначения, ни промежуточного. Проверять именно оба:
+  промежуточный качается по обычному HTTP, и пин там единственный контроль
+  целостности, а критерий, испытывающий только корневой, пропускает скрипт,
+  который пин промежуточного вовсе не проверяет (проверено мутацией 2026-09-07):
+  `bash -c 'for pin in root sub; do d=$(mktemp -d); out=$(scripts/nuc-ca-bundle.sh --$pin-sha256 0000000000000000000000000000000000000000000000000000000000000000 -o "$d/ca.pem" 2>&1); rc=$?; [ "$rc" -ne 0 ] || { echo "неверный пин $pin принят" >&2; exit 3; }; printf "%s\n" "$out" | grep -qiE "sha256|пин|checksum" || { printf "отказ по $pin без внятной причины: %s\n" "$out" >&2; exit 4; }; [ ! -e "$d/ca.pem" ] || { echo "при отказе по $pin остался файл назначения" >&2; exit 5; }; ls -a "$d" | grep -q nuc-ca-bundle && { echo "при отказе по $pin остался промежуточный файл" >&2; exit 6; }; done; true'`
 - **AC-007** — скрипт идемпотентен: два прогона дают побайтово одно и то же:
   `bash -c 'd=$(mktemp -d); scripts/nuc-ca-bundle.sh -o "$d/a.pem" >/dev/null 2>&1 && scripts/nuc-ca-bundle.sh -o "$d/b.pem" >/dev/null 2>&1 && cmp "$d/a.pem" "$d/b.pem"'`
 - **AC-008** — пресет работает СМОНТИРОВАННЫМ в образ, а не только на хосте:

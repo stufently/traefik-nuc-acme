@@ -115,4 +115,10 @@ cat "$tmpdir/root.pem" "$tmpdir/sub.pem" > "$tmpdir/bundle.pem"
 
 parent="$(dirname "$output")"
 mkdir -p "$parent"
-mv -f "$tmpdir/bundle.pem" "$output"
+# Stage the final file next to its destination: mv is only atomic within one
+# filesystem, and $tmpdir usually lives on another one.
+staged="$(mktemp "$parent/.nuc-ca-bundle.XXXXXX")"
+trap 'rm -rf "$tmpdir"; rm -f "$staged"' EXIT
+cat "$tmpdir/bundle.pem" > "$staged"
+chmod 644 "$staged"
+mv -f "$staged" "$output"

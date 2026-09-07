@@ -88,7 +88,7 @@ Merged to `main` and pushed. The executor's `report.json` was dropped from the
 repository and gitignored: it describes one run, not the product, and M1/M2 had
 never carried one.
 
-## Milestone 4 — IN_PROGRESS since 2026-09-07 (НУЦ preset and CA bundle)
+## Milestone 4 — DONE 2026-09-07 (НУЦ preset and CA bundle)
 
 Executor `gk-traefik-nuc-m4`, spec `docs/specs/m4-nuc-preset.md`, 12 criteria.
 Research verified live, not read from docs: the ACME directory really is
@@ -137,8 +137,34 @@ Cross-mutation review handed to Codex (opposite executor) in pane
 `cx-traefik-nuc-m4-cross`, clone `/home/deploy/exec-clones/traefik-nuc-m4-cross`,
 branch `m4-cross-review`, spec `docs/specs/m4-cross-review.md` (5 criteria).
 Because the deliverables are shell and YAML with no unit tests, the twelve
-acceptance criteria play the role of the test suite, and the review hunts
-corruptions that all twelve miss. Merge waits on its verdict.
+acceptance criteria play the role of the test suite, and the review hunted
+corruptions that all twelve miss.
+
+The review's first pass stopped on a defect in my own task: I told it to run all
+twelve criteria per corruption, but the twelfth checks the tree is clean, so any
+temporary edit "killed" every mutation and measured nothing. Fixed by splitting
+behavioural criteria (per corruption) from hygiene ones (once before and once
+after the campaign). The second pass ran 17 corruptions over 153 command runs;
+8 survived, all of them holes in my criteria rather than defects in the work.
+Seven are now closed by `scripts/nuc_preset_checks.sh`, each proven by killing
+its corruption; the review and its machine-readable evidence are kept in
+`docs/reviews/`.
+
+Known gap left open deliberately: nothing catches a non-atomic write to the
+destination bundle. Catching it needs a failure injected mid-write; the
+regression costs a corrupted bundle that a re-run repairs, and the script
+already stages and renames. Priced gap, not debt.
+
+Both milestone reviewers were called on the diff. Codex found two real defects
+in tooling I had written myself and verified as fine: concurrent `run`
+invocations shared one binary path, and the gate's new baseline check compared
+against `git diff`, which hides a staged change to a file outside the patch.
+Both fixed and probed. agy returned "accepted, no findings" three times with a
+mutation-gate transcript whose assertion texts do not exist anywhere in this
+repository — composed from the wording of the milestone 1 spec, not produced by
+a run. Its clone was untouched; the review carries no evidentiary weight.
+
+Merged to `main` and pushed.
 
 ## Milestone 5 — documentation (was part of milestone 3)
 

@@ -44,6 +44,13 @@ Facts that milestone 3 must not rediscover:
 
 - [ ] НУЦ configuration preset: `caServer`, `keyType=RSA2048`,
       `csrSubject.country=RU`.
+      **Acceptance runs against the Pebble stand, not against the live НУЦ.**
+      "Works against production НУЦ" is removed as a criterion: it depends on
+      accreditation nobody has confirmed, not on code quality. Ship the preset
+      and state plainly in the docs that the live CA is UNVERIFIED. Note also
+      that no mock CA can prove `C=RU` in the issued leaf — Pebble and Let's
+      Encrypt both drop the CSR subject — so against the live НУЦ that check
+      would be testing НУЦ's behaviour, not ours.
 - [ ] **CA bundle.** `nuc-acme.voskhod.ru` presents a certificate signed by a
       Russian state root CA that is not in any standard trust store — plain
       `curl` fails the TLS handshake before ACME even starts. Decide: ship the
@@ -61,40 +68,22 @@ Facts that milestone 3 must not rediscover:
       executor and never ran — publishing outward under the owner's account with
       a `write:packages` token is the owner's call. Say where the token is kept
       and the push can be done as a separate step.
-- [ ] **A typo in `csrSubject` silently disables the resolver.** Traefik does not
-      fail on an invalid subject: it logs `ERR The ACME resolve is skipped from
-      the resolvers list` and keeps running, so the user gets NO certificates and
-      only a log line says why (verified: the process never exits, `rc=124` on a
-      timeout). Stock Traefik treats every resolver error this way. Options: a
-      warning in the README (milestone 3), or a deliberate behaviour change as
-      its own milestone. Do NOT fix this in passing — an executor already tried
-      to close it with a `log.Fatal` patch to make a criterion pass, and that
-      patch was withdrawn (fake hunk hashes, error matched by text, and it would
-      take the whole proxy down over one resolver).
-
-
-- [ ] Is there verified access to НУЦ (personally or through a controlled legal
-      entity) to obtain even one real test certificate? Without accreditation an
-      anonymous request cannot be filed at all, so "works against production
-      НУЦ" cannot be an acceptance criterion.
-      **Asked 2026-09-06. NO ANSWER FROM THE OWNER YET.** The answer that
-      appeared in the question UI ("can be obtained, needs time") came from the
-      `cl-tg-claude-userbot` session, which stated plainly that it does not know
-      the fact and picked the least blocking option. Milestone 3 is therefore
-      planned in two parts as a PLANNING decision, not as confirmed access:
-      part A (preset, CA bundle, documentation) proceeds regardless; part B
-      (live verification against a real НУЦ certificate) waits for the owner to
-      confirm access and is NOT queued to an executor until then.
-- [x] Search demand measured 2026-09-06 (Yandex Wordstat): `traefik` 1521
-      impressions/month, `traefik acme` 18, `traefik сертификат` 32,
-      `нуц сертификат` 5139, `нуц acme` 8. The "нуц" volume is people installing
-      root certificates into a browser — a different audience; no traefik × нуц
-      overlap appears in any row. Conclusion: there is effectively no
-      Russian-language search demand for this product, so the SEO premise does
-      not hold. RECOMMENDATION (the owner decides): cut milestone 3 to README
-      EN/RU + FAQ + `COMPATIBILITY.md`, drop GitHub Pages and the SEO
-      scaffolding; the value is the tool itself plus GEO citation on a rare but
-      exact query.
+- [x] **DECIDED 2026-09-07 (coordinator, not the owner): validate `csrSubject`
+      BEFORE Traefik, do not touch Traefik's behaviour.** The hazard is real —
+      an invalid subject does not stop Traefik: it logs `ERR The ACME resolve is
+      skipped from the resolvers list` and keeps running, so the user gets NO
+      certificates and only a log line says why (verified: the process never
+      exits, `rc=124` on a timeout). Stock Traefik treats every resolver error
+      this way, so patching it would fork upstream in a place upstream will not
+      change, and every rebase would pay for it. Instead the guard lives on OUR
+      side of the boundary: parse and validate `csrSubject` in our own entry
+      point and refuse to start LOUDLY on an invalid subject, so a bad config
+      never reaches the resolver. Fail-closed — a guard that passes bad input is
+      not a guard. Keep a README note in milestone 3 explaining why validation
+      sits outside Traefik. Do NOT close this in passing inside another
+      milestone: an executor already tried, with a `log.Fatal` patch that would
+      have taken the whole proxy down over one resolver (withdrawn — fake hunk
+      hashes, error matched by text).
 
 ## Blocked until 2026-10-06
 

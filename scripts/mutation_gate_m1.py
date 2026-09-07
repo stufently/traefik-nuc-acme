@@ -232,7 +232,9 @@ def take_lock():
 
 def check_baseline():
     """The snapshot is only trustworthy if the tree still matches the patch."""
-    diff = subprocess.run(["git", "-C", str(UPSTREAM), "diff"],
+    # "git diff" alone compares the worktree with the INDEX, so a staged change
+    # to a file outside the patch is invisible to it. Compare against HEAD.
+    diff = subprocess.run(["git", "-C", str(UPSTREAM), "diff", "HEAD"],
                           stdout=subprocess.PIPE, text=True, timeout=120).stdout
     if diff != PATCH.read_text():
         sys.exit(f"upstream tree does not match {PATCH.relative_to(ROOT)}; "

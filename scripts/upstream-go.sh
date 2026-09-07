@@ -36,9 +36,13 @@ if [ "${1:-}" = "run" ]; then
     fi
     shift
     # Keep build output out of GOCACHE: that directory belongs to the Go
-    # toolchain, and a stray binary in it is confusing at best.
+    # toolchain, and a stray binary in it is confusing at best. The name carries
+    # the pid because two concurrent runs of the same package would otherwise
+    # share one path, and the second build would replace the binary the first
+    # is about to exec.
     mkdir -p "$root/.runbin"
-    bin="$root/.runbin/$(basename "$pkg")"
+    find "$root/.runbin" -maxdepth 1 -type f -mmin +1440 -delete 2>/dev/null || true
+    bin="$root/.runbin/$(basename "$pkg").$$"
     go -C "$upstream" build -o "$bin" "$pkg"
     exec "$bin" "$@"
 fi

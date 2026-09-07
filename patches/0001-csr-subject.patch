@@ -1,3 +1,245 @@
+diff --git a/cmd/traefik/traefik.go b/cmd/traefik/traefik.go
+index 8c587c7..e8cc141 100644
+--- a/cmd/traefik/traefik.go
++++ b/cmd/traefik/traefik.go
+@@ -24,6 +24,7 @@ import (
+ 	"github.com/traefik/paerser/cli"
+ 	"github.com/traefik/traefik/v3/cmd"
+ 	"github.com/traefik/traefik/v3/cmd/healthcheck"
++	"github.com/traefik/traefik/v3/cmd/validatecsr"
+ 	cmdVersion "github.com/traefik/traefik/v3/cmd/version"
+ 	tcli "github.com/traefik/traefik/v3/pkg/cli"
+ 	"github.com/traefik/traefik/v3/pkg/collector"
+@@ -74,6 +75,12 @@ Complete documentation is available at https://traefik.io`,
+ 		os.Exit(1)
+ 	}
+ 
++	err = cmdTraefik.AddCommand(validatecsr.NewCmd(&tConfig.Configuration, loaders))
++	if err != nil {
++		stdlog.Println(err)
++		os.Exit(1)
++	}
++
+ 	err = cmdTraefik.AddCommand(cmdVersion.NewCmd())
+ 	if err != nil {
+ 		stdlog.Println(err)
+diff --git a/cmd/validatecsr/validatecsr.go b/cmd/validatecsr/validatecsr.go
+new file mode 100644
+index 0000000..bc73702
+--- /dev/null
++++ b/cmd/validatecsr/validatecsr.go
+@@ -0,0 +1,46 @@
++// Package validatecsr checks ACME CSR subjects before Traefik starts.
++package validatecsr
++
++import (
++	"fmt"
++	"maps"
++	"os"
++	"slices"
++
++	"github.com/traefik/paerser/cli"
++	"github.com/traefik/traefik/v3/pkg/config/static"
++)
++
++// NewCmd builds a CSR subject validation command using Traefik's loaders.
++func NewCmd(cfg *static.Configuration, loaders []cli.ResourceLoader) *cli.Command {
++	return &cli.Command{
++		Name:          "validate-csr-subject",
++		Description:   "Validate all ACME CSR subjects before starting Traefik.",
++		Configuration: cfg,
++		Resources:     loaders,
++		Run: func(_ []string) error {
++			if err := Do(cfg); err != nil {
++				fmt.Fprintln(os.Stderr, err)
++				os.Exit(1)
++			}
++			fmt.Fprintln(os.Stdout, "csrSubject OK")
++			return nil
++		},
++	}
++}
++
++// Do validates every ACME resolver's subject without starting a server.
++func Do(cfg *static.Configuration) error {
++	// Stable ordering makes the first invalid resolver predictable.
++	names := slices.Sorted(maps.Keys(cfg.CertificatesResolvers))
++	for _, name := range names {
++		resolver := cfg.CertificatesResolvers[name]
++		if resolver.ACME == nil {
++			continue
++		}
++		if err := resolver.ACME.CSRSubject.Validate(); err != nil {
++			return fmt.Errorf("invalid CSR subject in resolver %q: %w", name, err)
++		}
++	}
++	return nil
++}
+diff --git a/cmd/validatecsr/validatecsr_test.go b/cmd/validatecsr/validatecsr_test.go
+new file mode 100644
+index 0000000..916d425
+--- /dev/null
++++ b/cmd/validatecsr/validatecsr_test.go
+@@ -0,0 +1,159 @@
++package validatecsr
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"slices"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/traefik/paerser/cli"
++	"github.com/traefik/traefik/v3/cmd"
++	tcli "github.com/traefik/traefik/v3/pkg/cli"
++	"github.com/traefik/traefik/v3/pkg/config/static"
++	"github.com/traefik/traefik/v3/pkg/provider/acme"
++)
++
++func TestCSRGuardValidSubjects(t *testing.T) {
++	for _, subject := range []*acme.CSRSubject{nil, {}, {Country: "RU", Organization: "Example LLC"}} {
++		cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{
++			"valid": {ACME: &acme.Configuration{CSRSubject: subject}},
++		}}
++		if err := Do(cfg); err != nil {
++			t.Fatalf("valid subject rejected: %v", err)
++		}
++	}
++}
++
++func TestCSRGuardInvalidCountry(t *testing.T) {
++	cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{
++		"nuc": {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Country: "RUS"}}},
++	}}
++	err := Do(cfg)
++	if err == nil || err.Error() != `invalid CSR subject in resolver "nuc": CSR subject country must contain exactly two ASCII letters` {
++		t.Fatalf("invalid country error missing resolver or validation reason: %v", err)
++	}
++}
++
++func TestCSRGuardChecksAllResolvers(t *testing.T) {
++	cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{
++		"a-valid":   {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Country: "RU"}}},
++		"b-invalid": {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Country: "RUS"}}},
++	}}
++	err := Do(cfg)
++	if err == nil || err.Error() != `invalid CSR subject in resolver "b-invalid": CSR subject country must contain exactly two ASCII letters` {
++		t.Fatalf("second resolver was not rejected: %v", err)
++	}
++}
++
++func TestCSRGuardWithoutACME(t *testing.T) {
++	cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{"stock": {}}}
++	if err := Do(cfg); err != nil {
++		t.Fatalf("resolver without ACME rejected: %v", err)
++	}
++	if err := Do(&static.Configuration{}); err != nil {
++		t.Fatalf("configuration without resolvers rejected: %v", err)
++	}
++}
++
++// Exercise the real command and loaders in a child process so os.Exit and the
++// stdout/stderr contract are tested without replacing the exit function.
++func TestCSRGuardProcess(t *testing.T) {
++	if os.Getenv("TRAEFIK_CSR_GUARD_TEST") != "1" {
++		return
++	}
++	var args []string
++	for i, arg := range os.Args {
++		if arg == "--" {
++			args = os.Args[i+1:]
++			break
++		}
++	}
++	os.Args = append([]string{"traefik", "validate-csr-subject"}, args...)
++	cfg := cmd.NewTraefikConfiguration()
++	loaders := []cli.ResourceLoader{&tcli.DeprecationLoader{}, &tcli.FileLoader{}, &tcli.FlagLoader{}, &tcli.EnvLoader{}}
++	if err := cli.Execute(NewCmd(&cfg.Configuration, loaders)); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(2)
++	}
++	os.Exit(0)
++}
++
++func guardProcess(t *testing.T, dir string, env []string, args ...string) (int, string, string) {
++	t.Helper()
++	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
++	defer cancel()
++	child := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestCSRGuardProcess$", "--"}, args...)...)
++	child.Dir = dir
++	child.Env = append(os.Environ(), "TRAEFIK_CSR_GUARD_TEST=1", "HOME="+dir, "XDG_CONFIG_HOME="+dir)
++	child.Env = append(child.Env, env...)
++	var stdout, stderr bytes.Buffer
++	child.Stdout, child.Stderr = &stdout, &stderr
++	err := child.Run()
++	if ctx.Err() != nil {
++		t.Fatalf("guard process timed out: %v", ctx.Err())
++	}
++	if err != nil {
++		if _, ok := err.(*exec.ExitError); !ok {
++			t.Fatalf("could not run guard process: %v", err)
++		}
++	}
++	return child.ProcessState.ExitCode(), stdout.String(), stderr.String()
++}
++
++func TestCSRGuardExitStatus(t *testing.T) {
++	rc, stdout, stderr := guardProcess(t, t.TempDir(), nil, "--certificatesresolvers.nuc.acme.csrsubject.country=RUS")
++	if rc != 1 {
++		t.Fatalf("invalid subject exit code = %d, want 1; stdout=%q stderr=%q", rc, stdout, stderr)
++	}
++	if stdout != "" || !slices.Contains(strings.Split(stderr, "\n"), `invalid CSR subject in resolver "nuc": CSR subject country must contain exactly two ASCII letters`) {
++		t.Fatalf("invalid subject output: stdout=%q stderr=%q", stdout, stderr)
++	}
++}
++
++func TestCSRGuardSuccessOutput(t *testing.T) {
++	for _, args := range [][]string{nil, {"--certificatesresolvers.nuc.acme.csrsubject.country=RU"}} {
++		rc, stdout, stderr := guardProcess(t, t.TempDir(), nil, args...)
++		if rc != 0 || stdout != "csrSubject OK\n" {
++			t.Fatalf("valid configuration did not succeed: rc=%d stdout=%q stderr=%q", rc, stdout, stderr)
++		}
++	}
++}
++
++func TestCSRGuardConfigSources(t *testing.T) {
++	for _, source := range []string{"explicit-yaml", "explicit-toml", "auto-yaml", "env"} {
++		t.Run(source, func(t *testing.T) {
++			dir := t.TempDir()
++			var args, env []string
++			if source == "env" {
++				env = []string{"TRAEFIK_CERTIFICATESRESOLVERS_NUC_ACME_CSRSUBJECT_COUNTRY=RUS"}
++			} else {
++				name := "custom.yml"
++				content := "certificatesResolvers:\n  nuc:\n    acme:\n      csrSubject:\n        country: RUS\n"
++				if source == "explicit-toml" {
++					name = "custom.toml"
++					content = "[certificatesResolvers.nuc.acme.csrSubject]\ncountry = \"RUS\"\n"
++				}
++				if source == "auto-yaml" {
++					name = "traefik.yml"
++				}
++				path := filepath.Join(dir, name)
++				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
++					t.Fatal(err)
++				}
++				if source != "auto-yaml" {
++					args = []string{"--configfile=" + path}
++				}
++			}
++			rc, stdout, stderr := guardProcess(t, dir, env, args...)
++			if rc != 1 || stdout != "" || !bytes.Contains([]byte(stderr), []byte("invalid CSR subject in resolver \"nuc\": CSR subject country must contain exactly two ASCII letters\n")) {
++				t.Fatalf("configuration source was not validated: rc=%d stdout=%q stderr=%q", rc, stdout, stderr)
++			}
++		})
++	}
++}
 diff --git a/pkg/provider/acme/csr.go b/pkg/provider/acme/csr.go
 new file mode 100644
 index 0000000..55640d5

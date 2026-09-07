@@ -38,8 +38,9 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 RUN apk add --no-cache --no-progress ca-certificates tzdata
 
 COPY --from=builder /out/traefik /traefik
+COPY --chmod=755 docker/entrypoint.sh /entrypoint.sh
 
 EXPOSE 80
 VOLUME ["/tmp"]
 
-ENTRYPOINT ["/traefik"]
+ENTRYPOINT ["/entrypoint.sh"]

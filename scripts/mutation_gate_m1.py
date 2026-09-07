@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kill M1 and M1a regressions offline and restore the exact upstream bytes.
+"""Kill M1, M1a, and M3 regressions offline and restore the exact upstream bytes.
 
 Each mutation runs only its named Go test, first unchanged and then mutated.
 A compiler error, unrelated assertion, absent test, or timeout is not a kill.
@@ -28,6 +28,9 @@ class Mutation:
     after: str
     test: str
     assertion: str
+    source: Path = SOURCE
+    tests: Path = TESTS
+    package: str = PACKAGE
 
 
 MUTATIONS = (
@@ -101,6 +104,36 @@ MUTATIONS = (
         "TestCSRSubjectCountryUppercase",
         't.Fatalf("country was not uppercased: %v", csr.Subject.Country)',
     ),
+    Mutation(
+        "Guard checks only the first resolver",
+        "for _, name := range names {",
+        "for _, name := range names[:1] {",
+        "TestCSRGuardChecksAllResolvers",
+        't.Fatalf("second resolver was not rejected: %v", err)',
+        UPSTREAM / "cmd/validatecsr/validatecsr.go",
+        UPSTREAM / "cmd/validatecsr/validatecsr_test.go",
+        "github.com/traefik/traefik/v3/cmd/validatecsr",
+    ),
+    Mutation(
+        "Guard always exits zero",
+        "os.Exit(1)",
+        "os.Exit(0)",
+        "TestCSRGuardExitStatus",
+        't.Fatalf("invalid subject exit code = %d, want 1; stdout=%q stderr=%q", rc, stdout, stderr)',
+        UPSTREAM / "cmd/validatecsr/validatecsr.go",
+        UPSTREAM / "cmd/validatecsr/validatecsr_test.go",
+        "github.com/traefik/traefik/v3/cmd/validatecsr",
+    ),
+    Mutation(
+        "Guard error omits resolver name",
+        'fmt.Errorf("invalid CSR subject in resolver %q: %w", name, err)',
+        'fmt.Errorf("invalid CSR subject: %w", err)',
+        "TestCSRGuardInvalidCountry",
+        't.Fatalf("invalid country error missing resolver or validation reason: %v", err)',
+        UPSTREAM / "cmd/validatecsr/validatecsr.go",
+        UPSTREAM / "cmd/validatecsr/validatecsr_test.go",
+        "github.com/traefik/traefik/v3/cmd/validatecsr",
+    ),
 )
 
 
@@ -108,10 +141,10 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def run_test(name):
+def run_test(mutation):
     result = subprocess.run(
         [str(ROOT / "scripts/upstream-go.sh"), "test", "-count=1", "-json",
-         "-run", f"^{name}$", "./pkg/provider/acme"],
+         "-run", f"^{mutation.test}$", "./" + str(mutation.source.parent.relative_to(UPSTREAM))],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, timeout=180,
     )
@@ -126,8 +159,8 @@ def run_test(name):
     return result, events
 
 
-def test_action(events, name, action):
-    return any(event.get("Package") == PACKAGE and event.get("Test") == name
+def test_action(events, mutation, action):
+    return any(event.get("Package") == mutation.package and event.get("Test") == mutation.test
                and event.get("Action") == action for event in events)
 
 
@@ -136,30 +169,31 @@ def first_assertion(events):
         if event.get("Action") != "output":
             continue
         for line in event.get("Output", "").splitlines():
-            match = re.search(r"\b(csr_test\.go):(\d+):\s*(.*)", line)
+            match = re.search(r"\b(\w+_test\.go):(\d+):\s*(.*)", line)
             if match:
-                return event, int(match[2]), line.strip()
-    return None, None, "нет упавшей строки ассерта"
+                return event, match[1], int(match[2]), line.strip()
+    return None, None, None, "нет упавшей строки ассерта"
 
 
 def main():
-    original = SOURCE.read_bytes()
-    original_sha = digest(original)
-    test_bytes = TESTS.read_bytes()
-    test_sha = digest(test_bytes)
-    test_lines = test_bytes.decode().splitlines()
+    paths = {path for mutation in MUTATIONS for path in (mutation.source, mutation.tests)}
+    originals = {path: path.read_bytes() for path in paths}
+    hashes = {path: digest(data) for path, data in originals.items()}
     killed = 0
-    print(f"Original csr.go sha256: {original_sha}", flush=True)
+    for path in sorted(paths):
+        print(f"Original {path.relative_to(UPSTREAM)} sha256: {hashes[path]}", flush=True)
 
     for mutation in MUTATIONS:
+        original = originals[mutation.source]
+        test_lines = originals[mutation.tests].decode().splitlines()
         first_line = "нет упавшей строки ассерта"
         did_kill = False
         detail = ""
         try:
-            if SOURCE.read_bytes() != original or digest(TESTS.read_bytes()) != test_sha:
+            if any(path.read_bytes() != data for path, data in originals.items()):
                 raise RuntimeError("upstream files differ from the clean gate baseline")
-            baseline, events = run_test(mutation.test)
-            if baseline.returncode != 0 or not test_action(events, mutation.test, "pass"):
+            baseline, events = run_test(mutation)
+            if baseline.returncode != 0 or not test_action(events, mutation, "pass"):
                 raise RuntimeError(f"clean target test is not green (rc={baseline.returncode}):\n{baseline.stdout}")
 
             before = mutation.before.encode()
@@ -171,15 +205,16 @@ def main():
             if len(assertion_lines) != 1:
                 raise RuntimeError("expected assertion must match exactly once")
 
-            SOURCE.write_bytes(original.replace(before, mutation.after.encode(), 1))
-            mutated, events = run_test(mutation.test)
-            event, line_number, first_line = first_assertion(events)
+            mutation.source.write_bytes(original.replace(before, mutation.after.encode(), 1))
+            mutated, events = run_test(mutation)
+            event, filename, line_number, first_line = first_assertion(events)
             did_kill = (
                 mutated.returncode == 1
-                and test_action(events, mutation.test, "fail")
+                and test_action(events, mutation, "fail")
                 and event is not None
-                and event.get("Package") == PACKAGE
+                and event.get("Package") == mutation.package
                 and event.get("Test") == mutation.test
+                and filename == mutation.tests.name
                 and line_number == assertion_lines[0]
             )
             if not did_kill:
@@ -187,19 +222,21 @@ def main():
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             detail = str(exc)
         finally:
-            SOURCE.write_bytes(original)
-            restored_sha = digest(SOURCE.read_bytes())
-            if restored_sha != original_sha:
-                raise RuntimeError(f"RESTORATION FAILED: expected {original_sha}, got {restored_sha}")
-            if digest(TESTS.read_bytes()) != test_sha:
-                raise RuntimeError("test file changed during mutation gate")
+            changed_tests = any(m.tests.read_bytes() != originals[m.tests] for m in MUTATIONS)
+            for path, data in originals.items():
+                path.write_bytes(data)
+                restored = path.read_bytes()
+                if restored != data or digest(restored) != hashes[path]:
+                    raise RuntimeError(f"RESTORATION FAILED: {path}")
+            if changed_tests:
+                raise RuntimeError("test file changed during mutation gate (original bytes restored)")
 
         killed += int(did_kill)
         print(f"{mutation.name}: {'убит' if did_kill else 'выжил'}; {first_line}", flush=True)
         if detail:
             print(detail, flush=True)
 
-    print(f"Убито {killed}/{len(MUTATIONS)}; исходный sha256 восстановлен: {original_sha}", flush=True)
+    print(f"Убито {killed}/{len(MUTATIONS)}; исходные байты и sha256 всех {len(paths)} файлов восстановлены", flush=True)
     return 0 if killed == len(MUTATIONS) else 1
 
 

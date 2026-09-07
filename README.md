@@ -50,6 +50,43 @@ certificatesResolvers:
 Every `csrSubject` field is optional; omitting the whole block reproduces stock
 Traefik behaviour byte for byte.
 
+## Validation before startup
+
+Stock Traefik skips an ACME resolver that fails initialization and keeps the
+server running. An invalid `csrSubject` therefore leaves that resolver issuing
+no certificates, with the reason visible only in logs. A typo can otherwise
+cause a silent absence of certificates.
+
+The image entrypoint first runs `/traefik validate-csr-subject "$@"`. This command
+uses the same configuration loader instances as Traefik: deprecation, file,
+flags, then environment. It respects `--configfile` and Traefik's normal file
+search paths; it does not parse a separate configuration. Every ACME resolver
+is checked with the existing `CSRSubject.Validate()` rules, in name order.
+Resolvers without ACME and empty subjects are accepted.
+
+On failure the command writes a line such as this to stderr and exits with 1:
+
+```text
+invalid CSR subject in resolver "nuc": CSR subject country must contain exactly two ASCII letters
+```
+
+On success it writes `csrSubject OK` to stdout and exits with 0. Only then does
+the entrypoint replace itself with the Traefik server using `exec`. A nonzero
+validation status is returned unchanged, so the server never starts with an
+invalid subject. Stock resolver initialization behavior is unchanged.
+
+Run the check directly without starting the server:
+
+```bash
+docker run --rm -v "$PWD/traefik.yml:/etc/traefik/traefik.yml:ro" \
+  traefik-nuc-acme:3.7.13-nuc.1 validate-csr-subject \
+  --configfile=/etc/traefik/traefik.yml
+```
+
+The entrypoint forwards `healthcheck`, `version`, and `validate-csr-subject`
+directly, so service commands retain their own behavior. This guard validates
+CSR subjects; other ACME configuration errors still follow Traefik's behavior.
+
 ## Pinned versions
 
 | Component | Version |
@@ -62,7 +99,8 @@ Machine-readable: [`upstream.lock`](upstream.lock).
 
 ## Status
 
-Milestone 2: a patched image and a Pebble integration stand. The НУЦ preset
+Milestone 3: fail-closed CSR subject validation before startup, a patched image,
+and a Pebble integration stand. The НУЦ preset
 and published documentation come later.
 
 ## Docker image

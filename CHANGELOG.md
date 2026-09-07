@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-07
+
+- Added `validate-csr-subject` with Traefik's shared configuration loaders and
+  the existing CSR subject validation rules. Invalid subjects exit with 1 and
+  identify the resolver on stderr; valid and empty subjects return `csrSubject OK`.
+- Added an image entrypoint that validates before starting the server, preserves
+  failure status, and forwards service subcommands directly. Stock resolver
+  initialization remains unchanged.
+- Added guard tests for multiple resolvers, exit status, output, and configuration
+  sources. Expanded the offline mutation gate from ten to thirteen mutations,
+  checking each target assertion and restoring source and test bytes and hashes.
+
 ## 2026-09-06
 
 - Added a multi-stage Docker image `traefik-nuc-acme:3.7.13-nuc.1` (no web

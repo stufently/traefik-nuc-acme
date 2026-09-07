@@ -88,7 +88,32 @@ Merged to `main` and pushed. The executor's `report.json` was dropped from the
 repository and gitignored: it describes one run, not the product, and M1/M2 had
 never carried one.
 
-## Milestone 3 — НУЦ preset and SEO/GEO documentation
+## Milestone 4 — IN_PROGRESS since 2026-09-07 (НУЦ preset and CA bundle)
+
+Executor `gk-traefik-nuc-m4`, spec `docs/specs/m4-nuc-preset.md`, 12 criteria.
+Research verified live, not read from docs: the ACME directory really is
+`https://nuc-acme.voskhod.ru/acme/api/v1/directory` (RFC 8555, `meta: null`,
+so no EAB — safe for lego v5.4.1, where `Meta` is a value, not a pointer).
+
+**CA bundle question answered.** The server does NOT send its intermediate, so
+the root alone is not enough. The widely linked sub CA on gu-st.ru (serial
+1002, 2022) is NOT the issuer of the current leaf — its SKI does not match the
+leaf's AKI. The real issuer comes from the leaf's own AIA:
+`http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt`, and it is served as PEM
+despite the `.crt` name. Root + that intermediate verify the live TLS
+(`ssl_verify_result=0`).
+
+**DECIDED (coordinator, not the owner): do NOT bake the bundle into the image.**
+The intermediate already rotated once (2022 → 2024); a baked bundle would go
+stale silently and surface as a handshake failure with no hint at the cause.
+A pinned fetch script plus a documented mount instead. Reversible: baking it in
+later is cheaper than digging it out.
+
+Still an assumption, marked as such in the spec and to be marked in the docs:
+that НУЦ requires `RSA2048` and rejects EC keys. Only accreditation could
+settle it, and issuing against the live CA stays a separate step "after access".
+
+## Milestone 5 — documentation (was part of milestone 3)
 
 - [ ] НУЦ configuration preset: `caServer`, `keyType=RSA2048`,
       `csrSubject.country=RU`.

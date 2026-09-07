@@ -40,7 +40,12 @@ cert_pem_from_store() {
 }
 
 latest_csr_mtime() {
-    printf '%d.000000000\n' "$((100 + restarts))"
+    # Frozen mtime = the capture directory never gets a fresh CSR.
+    if [[ "$csr_frozen" == true ]]; then
+        printf '100.000000000\n'
+    else
+        printf '%d.000000000\n' "$((100 + restarts))"
+    fi
 }
 
 csr_from_capture() {
@@ -77,6 +82,7 @@ run_case() (
     running=true
     csr_fixture=ru.csr
     log_fixture=renew-log-retryable.txt
+    csr_frozen=false
     case_failed=0
     case "$case_name" in
         success_first_attempt) success_on=1 ;;
@@ -85,6 +91,7 @@ run_case() (
         foreign_failure_fails_fast) log_fixture=renew-log-other.txt ;;
         traefik_died) running=false ;;
         csr_without_country) success_on=1; csr_fixture=no-country.csr ;;
+        stale_csr_never_fresh) success_on=1; csr_frozen=true ;;
         *) printf 'FAIL %s: unknown case\n' "$case_name"; return 1 ;;
     esac
 
@@ -121,6 +128,13 @@ run_case() (
             expect_equal restarts 1 "$restarts"
             expect_output 'renewed CSR missing C=RU:'
             ;;
+        stale_csr_never_fresh)
+            # A new serial without a new CSR is not a renewal: the loop must
+            # keep retrying and end exhausted, not report success.
+            expect_equal rc 1 "$rc"
+            expect_equal restarts "$STAND_RENEW_ATTEMPTS" "$restarts"
+            expect_output "after $STAND_RENEW_ATTEMPTS attempts"
+            ;;
     esac
     if ((case_failed)); then
         return 1
@@ -129,7 +143,8 @@ run_case() (
 )
 
 cases=(success_first_attempt race_then_success race_exhausted
-       foreign_failure_fails_fast traefik_died csr_without_country)
+       foreign_failure_fails_fast traefik_died csr_without_country
+       stale_csr_never_fresh)
 # The mutation gate can select its assigned case; the default runs all six.
 if (($#)); then
     cases=("$@")

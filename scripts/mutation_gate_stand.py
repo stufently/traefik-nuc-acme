@@ -92,6 +92,13 @@ MUTATIONS = (
         END { exit found ? 0 : 1 }''',
         "renew-log-race-after-near-miss.txt",
     ),
+    Mutation(
+        "New serial accepted without a fresh CSR",
+        '''                if awk -v n="$now_csr" -v o="$before_csr" 'BEGIN { exit !(n > o) }'; then''',
+        "                if true; then",
+        "stale_csr_never_fresh",
+        "FAIL stale_csr_never_fresh: rc expected 1, got 0",
+    ),
 )
 
 

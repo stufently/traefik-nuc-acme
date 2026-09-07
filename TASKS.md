@@ -200,10 +200,7 @@ failing on its own assert line.
 
 Open follow-ups:
 
-- [ ] De-flake `scripts/stand.sh renew-check`: either force a renewal instead of
-      waiting for traefik's own 168h timer, or retry the ACME challenge before
-      the 180s window expires. Until then AC-009-style criteria fail about half
-      the time for reasons unrelated to the code under test.
+- [x] **DONE in milestone 7:** de-flake `scripts/stand.sh renew-check`.
 - [ ] Not reachable by unit tests, closed structurally by AC-007 instead: a
       mutation that bypasses `p.obtainCertificate` inside `provider.go` survives,
       because calling `resolveCertificate` needs a live ACME client. Revisit only
@@ -304,6 +301,43 @@ Open follow-ups:
       which the owner has capped until 2026-10-06. **No `.github/workflows/`
       file may exist in this repository before that date** — not even a disabled
       one. OpenSSF Scorecard in particular exists only as a GitHub Action.
+
+## Milestone 7 — DONE 2026-09-07 (deterministic renew-check)
+
+Executor `gk-traefik-stand-deflake`, spec `docs/specs/m7-stand-renew-deflake.md`,
+7 criteria. `renew-check` now retries the whole recreate cycle, but ONLY when the
+traefik log carries the known HTTP-01 race signature — `unauthorized`,
+`/.well-known/acme-challenge/` and `404` on ONE line — and fails immediately on
+any other error, so the fix cannot mask a real regression. Attempts are capped by
+`STAND_RENEW_ATTEMPTS` (default 3), and the classifier is exposed as its own
+subcommand `classify-renew-log <file>` so it can be tested without the stand.
+
+Accepted by hand: seven criteria re-run, the live stand walked twice end to end
+(5/5 renewals both times, serials change, subject `C=RU`), and four mutations of
+the classifier replayed by me — each killed by its own near-miss fixture,
+including the "all three tokens but on different lines" case.
+
+**A defect of MY criterion, caught by timing that looked wrong.** AC-003 as first
+written could not fail: the trailing `scripts/stand.sh down` swallowed the exit
+code of the whole chain. Proven with `STAND_WAIT_TIMEOUT=1` — zero renewals ran
+and the criterion still returned 0. The sound form keeps the result in a variable
+and ends with `exit $rc`; verified red on a failing `wait` and green on five real
+renewals. Any future criterion that ends in a cleanup step has this bug.
+
+Backlog from the Codex cross-mutation run (out of this milestone's one fix round,
+kept as the next milestone's material — three of them need a test harness the
+repository has deliberately never built):
+
+- [ ] The retry LOOP itself is untested: mutants that `return 0` after attempts
+      are exhausted, that retry unconditionally without asking the classifier, or
+      that turn `continue` into `return 1`, all survive every criterion. Killing
+      them needs a harness that fakes `compose` and `cert_pem_from_store`, not
+      another fixture.
+- [ ] Three more classifier fixtures would pin what the current set does not:
+      the full URN replaced by the bare word `unauthorized` (verified by hand —
+      it survives), a two-plus-one line split where `unauthorized` and the
+      challenge share a line and a stray `404` follows later, and a positive log
+      where a near-miss line precedes the real race line.
 
 ## Deferred from the milestone 1 review (Grok cross-run, 2026-09-06)
 

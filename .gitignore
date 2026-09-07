@@ -7,3 +7,6 @@
 .toolchain/
 dist/
 *.tar.gz
+# Executor run artefacts: they describe one run, not the product.
+report.json
+report-blocked.md

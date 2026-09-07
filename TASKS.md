@@ -188,15 +188,28 @@ Merged to `main` and pushed.
       `RenewOptions` to anchor on; before v3.7.6 Traefik carries no lego v5 at
       all. No v3.8 tags exist upstream. Research was commissioned from
       `ask-codex research`, and its central claim re-checked by hand.
-- [ ] **README in RU — IN_PROGRESS since 2026-09-07.** Executor `cx-traefik-nuc-m5`,
-      spec `docs/specs/m5-readme-ru.md`, 12 criteria, checks in
-      `scripts/readme_parity.py`. The anti-fake criterion is the point of the
-      milestone: a copy of the English file passes headings, code blocks, URLs
-      and pins, and is caught only by the per-section Cyrillic check — probed,
-      the copy fails 14 sections of 15.
-      Cross-review here will be a MEANING check, not a mutation campaign:
-      mutating a translation measures nothing, but a second reader comparing
-      what the two files actually claim measures exactly the risk.
+- [x] **DONE 2026-09-07: README in RU (`README.ru.md`).** Executor
+      `cx-traefik-nuc-m5`, spec `docs/specs/m5-readme-ru.md`, 12 criteria,
+      checks in `scripts/readme_parity.py`. The anti-fake criterion was the
+      point of the milestone: a copy of the English file passes headings, code
+      blocks, URLs and pins, and is caught only by the per-section Cyrillic
+      check — probed, the copy fails 14 sections of 15. All twelve criteria
+      re-run independently on the merged tree, all eight parity checks green.
+      Boundaries held: `README.md` gained two lines (the link and its blank
+      line), `CHANGELOG.md` three, and no file under `patches/`, `scripts/`,
+      `presets/` or `docker/` was touched.
+      Cross-review was a MEANING check, not a mutation campaign: mutating a
+      translation measures nothing, but a second reader comparing what the two
+      files actually claim measures exactly the risk. Grok compared twelve
+      second-level sections plus the intro and both `###` subsections and found
+      **zero semantic divergences**; its technical claims were spot-checked by
+      me against the code rather than taken on trust. The access paragraph
+      survives the translation intact — no verification because there is no
+      access, no access because accreditation is required, a gap in access and
+      not in diligence. One fix was mine and predates the review: a Russian
+      paragraph the English README keeps for Russian-speaking readers was
+      duplicating text already translated above it, and was removed.
+      Kept in `docs/reviews/m5-cross-review.md` with the acceptance notes.
 - [ ] FAQ blocks and GitHub topics. **Recommended to drop** (coordinator, not
       the owner): Wordstat shows no RU search demand for this subject, so the
       SEO premise these items rest on is not there. Left for the owner to

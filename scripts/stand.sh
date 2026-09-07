@@ -260,13 +260,14 @@ cmd_csr_dump() {
 # unauthorized + /.well-known/acme-challenge/ + 404. Otherwise 1.
 classify_renew_log() {
     local file="${1:-}"
-    [[ -n "$file" && -f "$file" ]] || return 1
+    [[ -n "$file" && -f "$file" && -r "$file" ]] || return 1
     awk '
         index($0, "urn:ietf:params:acme:error:unauthorized") &&
         index($0, "/.well-known/acme-challenge/") &&
         index($0, "404") { found=1; exit }
         END { exit found ? 0 : 1 }
-    ' "$file"
+    ' "$file" && return 0
+    return 1
 }
 
 cmd_renew_check() {

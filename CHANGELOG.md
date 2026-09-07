@@ -2,6 +2,11 @@
 
 ## 2026-09-07
 
+- `scripts/stand.sh renew-check` retries only the known ACME HTTP-01 race
+  (`unauthorized` + `/.well-known/acme-challenge/` + `404` on one line),
+  up to `STAND_RENEW_ATTEMPTS` (default 3). Any other failure still exits
+  immediately. Classification is also available as `classify-renew-log`.
+
 - Issuance path selection (`Obtain` vs `ObtainForCSR`) is now a tested helper
   (`obtainCertificate`). Renewal takes names from the saved certificate body,
   matching stock lego, instead of the `Domain` field in storage.

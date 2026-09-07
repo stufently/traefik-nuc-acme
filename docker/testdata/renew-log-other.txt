@@ -1,0 +1,3 @@
+time="2026-09-07T12:00:00Z" level=error msg="Unable to obtain ACME certificate for domains \"stand.traefik-nuc.test\"" providerName=acme-pebble.acme
+The ACME resolve is skipped from the resolvers list: unable to get ACME account: register an ACME account: acme: error: 400 :: urn:ietf:params:acme:error:malformed :: Error creating new order :: CA refused the request
+cannot get ACME client acme-pebble: Get \"https://pebble:14000/dir\": dial tcp: lookup pebble: no such host

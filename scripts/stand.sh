@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Integration stand: patched Traefik + Pebble + ACME body-capturing proxy.
-# Subcommands: up, wait, dump-cert, csr-dump, renew-check, down.
+# Subcommands: up, wait, dump-cert, csr-dump, renew-check, classify-renew-log, down.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,6 +13,7 @@ tls_dir="$data_dir/acmeproxy-tls"
 pebble_mgmt="https://127.0.0.1:24150"
 wait_timeout="${STAND_WAIT_TIMEOUT:-120}"
 renew_timeout="${STAND_RENEW_TIMEOUT:-180}"
+renew_attempts="${STAND_RENEW_ATTEMPTS:-3}"
 
 compose() {
     docker compose -f "$compose_file" --project-directory "$root/docker" "$@"
@@ -20,7 +21,17 @@ compose() {
 
 usage() {
     cat <<'EOF'
-Usage: scripts/stand.sh <up|wait|dump-cert|csr-dump|renew-check|down>
+Usage: scripts/stand.sh <up|wait|dump-cert|csr-dump|renew-check|classify-renew-log|down>
+
+  classify-renew-log <file>
+      Exit 0 if the log shows the known ACME HTTP-01 race
+      (unauthorized + /.well-known/acme-challenge/ + 404 on one line),
+      otherwise exit 1. Reads the file only; does not start the stand.
+
+Environment:
+  STAND_WAIT_TIMEOUT    Seconds to wait for first issuance (default 120)
+  STAND_RENEW_TIMEOUT   Seconds to wait per renew attempt (default 180)
+  STAND_RENEW_ATTEMPTS  Renew retries on the known ACME race (default 3)
 EOF
 }
 
@@ -245,40 +256,81 @@ cmd_csr_dump() {
     csr_from_capture
 }
 
+# Exit 0 iff one log line has the known HTTP-01 race signature:
+# unauthorized + /.well-known/acme-challenge/ + 404. Otherwise 1.
+classify_renew_log() {
+    local file="${1:-}"
+    [[ -n "$file" && -f "$file" ]] || return 1
+    awk '
+        index($0, "urn:ietf:params:acme:error:unauthorized") &&
+        index($0, "/.well-known/acme-challenge/") &&
+        index($0, "404") { found=1; exit }
+        END { exit found ? 0 : 1 }
+    ' "$file"
+}
+
 cmd_renew_check() {
     if ! cert_pem_from_store >/dev/null; then
         echo "no certificate to renew; run up && wait first" >&2
         return 1
     fi
     local before after before_csr
+    local attempt logfile
+    local -a attempt_reasons=()
     before="$(cert_pem_from_store | openssl x509 -noout -serial)"
-    before_csr="$(latest_csr_mtime)"
-    compose up -d --force-recreate --no-deps traefik
-    local deadline=$((SECONDS + renew_timeout))
-    while ((SECONDS < deadline)); do
-        if after="$(cert_pem_from_store | openssl x509 -noout -serial 2>/dev/null)" \
-            && [[ -n "$after" ]] && [[ "$after" != "$before" ]]; then
-            local now_csr subject
-            now_csr="$(latest_csr_mtime)"
-            if awk -v n="$now_csr" -v o="$before_csr" 'BEGIN { exit !(n > o) }'; then
-                subject="$(csr_from_capture 2>/dev/null | openssl req -noout -subject)"
-                if echo "$subject" | grep -qE "C *= *RU"; then
-                    echo "renewed $before -> $after"
-                    echo "$subject"
-                    return 0
+
+    for ((attempt=1; attempt<=renew_attempts; attempt++)); do
+        before_csr="$(latest_csr_mtime)"
+        compose up -d --force-recreate --no-deps traefik
+        local deadline=$((SECONDS + renew_timeout))
+        while ((SECONDS < deadline)); do
+            if after="$(cert_pem_from_store | openssl x509 -noout -serial 2>/dev/null)" \
+                && [[ -n "$after" ]] && [[ "$after" != "$before" ]]; then
+                local now_csr subject
+                now_csr="$(latest_csr_mtime)"
+                if awk -v n="$now_csr" -v o="$before_csr" 'BEGIN { exit !(n > o) }'; then
+                    subject="$(csr_from_capture 2>/dev/null | openssl req -noout -subject)"
+                    if echo "$subject" | grep -qE "C *= *RU"; then
+                        echo "renewed $before -> $after"
+                        echo "$subject"
+                        return 0
+                    fi
+                    echo "renewed CSR missing C=RU: $subject" >&2
+                    return 1
                 fi
-                echo "renewed CSR missing C=RU: $subject" >&2
+            fi
+            if ! traefik_running; then
+                echo "traefik is not running during renew-check" >&2
+                compose logs traefik acmeproxy >&2 || true
                 return 1
             fi
-        fi
-        if ! traefik_running; then
-            echo "traefik is not running during renew-check" >&2
-            compose logs traefik acmeproxy >&2 || true
+            sleep 2
+        done
+
+        logfile="$(mktemp)"
+        compose logs traefik >"$logfile" 2>&1 || true
+        if classify_renew_log "$logfile"; then
+            attempt_reasons+=("attempt ${attempt}/${renew_attempts}: ACME challenge race (unauthorized 404)")
+            if ((attempt < renew_attempts)); then
+                echo "renew attempt ${attempt}/${renew_attempts} lost the ACME challenge, retrying" >&2
+                rm -f "$logfile"
+                continue
+            fi
+        else
+            echo "renew-check failed on attempt ${attempt}/${renew_attempts}: not a known ACME challenge race" >&2
+            cat "$logfile" >&2
+            compose logs acmeproxy >&2 || true
+            rm -f "$logfile"
             return 1
         fi
-        sleep 2
+        rm -f "$logfile"
     done
-    echo "timeout waiting for renewed serial and new captured CSR (still $before)" >&2
+
+    echo "timeout waiting for renewed serial and new captured CSR (still $before) after ${renew_attempts} attempts" >&2
+    local reason
+    for reason in "${attempt_reasons[@]}"; do
+        echo "$reason" >&2
+    done
     compose logs traefik acmeproxy >&2 || true
     return 1
 }
@@ -305,6 +357,13 @@ case "$1" in
     dump-cert) cmd_dump_cert ;;
     csr-dump) cmd_csr_dump ;;
     renew-check) cmd_renew_check ;;
+    classify-renew-log)
+        if [[ $# -lt 2 ]]; then
+            echo "classify-renew-log requires a file argument" >&2
+            exit 1
+        fi
+        classify_renew_log "$2"
+        ;;
     down) cmd_down ;;
     -h|--help) usage ;;
     *)

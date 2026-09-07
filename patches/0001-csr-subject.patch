@@ -77,10 +77,10 @@ index 0000000..bc73702
 +}
 diff --git a/cmd/validatecsr/validatecsr_test.go b/cmd/validatecsr/validatecsr_test.go
 new file mode 100644
-index 0000000..916d425
+index 0000000..fc73ae5
 --- /dev/null
 +++ b/cmd/validatecsr/validatecsr_test.go
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,172 @@
 +package validatecsr
 +
 +import (
@@ -131,6 +131,19 @@ index 0000000..916d425
 +	err := Do(cfg)
 +	if err == nil || err.Error() != `invalid CSR subject in resolver "b-invalid": CSR subject country must contain exactly two ASCII letters` {
 +		t.Fatalf("second resolver was not rejected: %v", err)
++	}
++}
++
++// A resolver without ACME must be skipped, not end the walk: a stock resolver
++// sorted first would otherwise hide an invalid subject behind it.
++func TestCSRGuardKeepsWalkingPastNonACMEResolver(t *testing.T) {
++	cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{
++		"a-stock":   {},
++		"b-invalid": {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Country: "RUS"}}},
++	}}
++	err := Do(cfg)
++	if err == nil || err.Error() != `invalid CSR subject in resolver "b-invalid": CSR subject country must contain exactly two ASCII letters` {
++		t.Fatalf("resolver after a non-ACME one was not checked: %v", err)
 +	}
 +}
 +

@@ -9,8 +9,10 @@
   failure status, and forwards service subcommands directly. Stock resolver
   initialization remains unchanged.
 - Added guard tests for multiple resolvers, exit status, output, and configuration
-  sources. Expanded the offline mutation gate from ten to thirteen mutations,
+  sources. Expanded the offline mutation gate from ten to fourteen mutations,
   checking each target assertion and restoring source and test bytes and hashes.
+  One of the fourteen covers a resolver without an ACME section: the walk must
+  continue past it, or an invalid subject sorted after it would go unchecked.
 
 ## 2026-09-06
 

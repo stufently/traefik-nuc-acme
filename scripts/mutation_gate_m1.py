@@ -125,6 +125,16 @@ MUTATIONS = (
         "github.com/traefik/traefik/v3/cmd/validatecsr",
     ),
     Mutation(
+        "Guard stops at a resolver without ACME",
+        "\t\t\tcontinue\n",
+        "\t\t\treturn nil\n",
+        "TestCSRGuardKeepsWalkingPastNonACMEResolver",
+        't.Fatalf("resolver after a non-ACME one was not checked: %v", err)',
+        UPSTREAM / "cmd/validatecsr/validatecsr.go",
+        UPSTREAM / "cmd/validatecsr/validatecsr_test.go",
+        "github.com/traefik/traefik/v3/cmd/validatecsr",
+    ),
+    Mutation(
         "Guard error omits resolver name",
         'fmt.Errorf("invalid CSR subject in resolver %q: %w", name, err)',
         'fmt.Errorf("invalid CSR subject: %w", err)',

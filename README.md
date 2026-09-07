@@ -57,12 +57,17 @@ Traefik behaviour byte for byte.
 Copy it, replace the `REPLACE-ME` values (`email`, `organization`, `locality`,
 storage path), and keep `csrSubject.country: RU`.
 
-**Live НУЦ is UNVERIFIED.** The directory URL, the TLS chain, and the absence
-of EAB were checked on 2026-09-07. No certificate has been issued or renewed
-against the production CA — that step needs accreditation nobody here has.
-`keyType: RSA2048` is an assumption from public RSA DV docs, not a measured
-rejection of EC keys. Treat the preset as a starting point, not a proven
-production config. Боевой НУЦ не проверен.
+**Live НУЦ is UNVERIFIED because access is unavailable.** Issuing against the
+production CA needs accreditation nobody involved has, so this is a gap in
+access rather than one in diligence, and verification is deferred until that
+access exists. Checked on 2026-09-07: the directory URL, the TLS chain, and the
+absence of EAB. Not checked, and not checkable from here: issue and renew.
+`keyType: RSA2048` follows public RSA DV documentation; whether the CA rejects
+EC keys stays open for the same reason. Treat the preset as a starting point,
+not a proven production config.
+
+Боевой НУЦ не проверен: доступа к нему нет, для выпуска нужна аккредитация.
+Проверка отложена до её появления — это дыра по доступу, а не по недосмотру.
 
 ### CA bundle (not baked into the image)
 

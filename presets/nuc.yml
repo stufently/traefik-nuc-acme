@@ -3,9 +3,12 @@
 # mount it as Traefik's static config together with the CA bundle from
 # scripts/nuc-ca-bundle.sh.
 #
-# Live issuance against НУЦ is UNVERIFIED: no certificate has been obtained
-# from this CA with this preset. The directory URL, TLS chain, and the
-# absence of EAB were checked on 2026-09-07; issue and renew were not.
+# Live issuance against НУЦ is UNVERIFIED because ACCESS IS UNAVAILABLE: the
+# CA requires accreditation nobody involved has, so no certificate has been
+# obtained from it with this preset and none could be. This is a gap in access,
+# not an oversight — verification is deferred until accreditation exists.
+# What WAS checked on 2026-09-07: the directory URL, the TLS chain, and the
+# absence of EAB. What was not: issue and renew.
 
 entryPoints:
   web:
@@ -19,8 +22,10 @@ certificatesResolvers:
       # RFC 8555 directory, verified HTTP 200 on 2026-09-07.
       # meta is null; EAB is not required (lego treats JSON null as a zero Meta).
       caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directory
-      # ASSUMPTION, not a measured fact: public НУЦ docs talk about RSA DV.
-      # Whether the CA rejects EC keys has not been checked (no accreditation).
+      # NOT MEASURED — the CA is unreachable without accreditation, so this
+      # cannot be checked at all rather than merely having been skipped.
+      # Public НУЦ documentation talks about RSA DV; whether the CA rejects
+      # EC keys stays open until someone with access can try it.
       keyType: RSA2048
       # REPLACE-ME: contact email used for the ACME account.
       email: "replace-me@example.com"

@@ -2,6 +2,11 @@
 
 ## 2026-09-07
 
+- `scripts/nuc_preset_checks.sh` now skips the argument-boundary check with a
+  stated reason when upstream is not staged in `.upstream/traefik`, instead of
+  reporting the quoting defect it cannot look for. Probed both ways: with
+  upstream staged the check still runs and still fails on an unquoted `$@`.
+
 - Added `README.ru.md`, a complete Russian translation with unchanged code
   blocks, reciprocal README links, and the НУЦ access and accreditation caveat.
 

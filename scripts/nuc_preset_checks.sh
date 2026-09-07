@@ -20,6 +20,15 @@ ok() {
     printf 'ok   %s\n' "$1"
 }
 
+# A check whose prerequisite is missing must say so, not report the defect it
+# was written to catch: this script runs both in the bare repository, which
+# ships only a patch, and in an executor clone with upstream staged.
+skips=0
+skip() {
+    printf 'skip %s: %s\n' "$1" "$2"
+    skips=$((skips + 1))
+}
+
 # M01: a pin check that compares only a prefix keeps refusing an all-zero pin,
 # so the criterion must use a digest that is wrong only in its last character.
 check_pin_compares_every_character() {
@@ -128,6 +137,10 @@ check_challenge_entrypoint_declared() {
 # cheapest way to see an unquoted "$@".
 check_wrapper_keeps_argument_boundaries() {
     local dir out
+    if [ ! -d .upstream/traefik ]; then
+        skip "arg-boundaries" "апстрим не выложен в .upstream/traefik, компилировать нечего"
+        return
+    fi
     dir="$(mktemp -d)"
     printf 'certificatesResolvers:\n  t:\n    acme:\n      storage: /tmp/x.json\n      csrSubject:\n        country: RUS\n' \
         > "$dir/config with spaces.yml"
@@ -151,4 +164,8 @@ if [ "$failures" -ne 0 ]; then
     printf '\n%d проверок не прошло\n' "$failures" >&2
     exit 1
 fi
-printf '\nвсе проверки прошли\n'
+if [ "$skips" -ne 0 ]; then
+    printf '\nвсе проверки прошли, пропущено %d (нет предпосылок)\n' "$skips"
+else
+    printf '\nвсе проверки прошли\n'
+fi

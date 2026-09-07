@@ -347,28 +347,30 @@ cmd_down() {
     rm -rf "$data_dir"
 }
 
-if [[ $# -lt 1 ]]; then
-    usage >&2
-    exit 2
-fi
-
-case "$1" in
-    up) cmd_up ;;
-    wait) cmd_wait ;;
-    dump-cert) cmd_dump_cert ;;
-    csr-dump) cmd_csr_dump ;;
-    renew-check) cmd_renew_check ;;
-    classify-renew-log)
-        if [[ $# -lt 2 ]]; then
-            echo "classify-renew-log requires a file argument" >&2
-            exit 1
-        fi
-        classify_renew_log "$2"
-        ;;
-    down) cmd_down ;;
-    -h|--help) usage ;;
-    *)
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    if [[ $# -lt 1 ]]; then
         usage >&2
         exit 2
-        ;;
-esac
+    fi
+
+    case "$1" in
+        up) cmd_up ;;
+        wait) cmd_wait ;;
+        dump-cert) cmd_dump_cert ;;
+        csr-dump) cmd_csr_dump ;;
+        renew-check) cmd_renew_check ;;
+        classify-renew-log)
+            if [[ $# -lt 2 ]]; then
+                echo "classify-renew-log requires a file argument" >&2
+                exit 1
+            fi
+            classify_renew_log "$2"
+            ;;
+        down) cmd_down ;;
+        -h|--help) usage ;;
+        *)
+            usage >&2
+            exit 2
+            ;;
+    esac
+fi

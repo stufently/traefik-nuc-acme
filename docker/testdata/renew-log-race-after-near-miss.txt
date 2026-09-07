@@ -1,0 +1,2 @@
+acme: error: 403 :: urn:ietf:params:acme:error:unauthorized :: http://stand.traefik-nuc.test:5002/.well-known/acme-challenge/first returned 500
+acme: error: 403 :: urn:ietf:params:acme:error:unauthorized :: http://stand.traefik-nuc.test:5002/.well-known/acme-challenge/second returned 404

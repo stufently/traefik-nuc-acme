@@ -40,7 +40,7 @@ Facts that milestone 3 must not rediscover:
   containerd store it counts uncompressed layers *and* compressed blobs
   (245.9 MB reported against 182.8 MB of real content).
 
-## Milestone 3a — IN_PROGRESS since 2026-09-07 (config guard)
+## Milestone 3a — DONE 2026-09-07 (config guard)
 
 Executor `cx-traefik-nuc-m3`, spec `docs/specs/m3-config-guard.md`, 12 criteria.
 Adds a `validate-csr-subject` subcommand INSIDE the patch that loads the static
@@ -72,10 +72,17 @@ product was already correct; the tests never covered it. Added
 `TestCSRGuardKeepsWalkingPastNonACMEResolver` and a 14th gate mutation; gate is
 14/14 with every mutation failing on its own assert line.
 
-Cross-mutation review handed to Grok (opposite executor) in pane
-`gk-traefik-nuc-m3-cross`, clone `/home/deploy/exec-clones/traefik-nuc-m3-cross`,
-branch `m3-cross-review`, spec `docs/specs/m3-cross-review.md` (5 criteria).
-Merge waits on its verdict.
+Cross-mutation review by Grok (opposite executor) accepted 5/5: 13 of its own
+mutations, 8 survived. Its findings and my verification of each are kept in
+`docs/reviews/m3-cross-review.md` — including one claim that was wrong (AC-010
+does kill both entrypoint mutations, with distinct exit codes proving the
+reason). Four holes closed with new tests; the gate now runs 17 mutations, all
+killed on their own assert lines. One known gap left open deliberately: nothing
+tests that the entrypoint keeps excluding `healthcheck` from the guard.
+
+Merged to `main` and pushed. The executor's `report.json` was dropped from the
+repository and gitignored: it describes one run, not the product, and M1/M2 had
+never carried one.
 
 ## Milestone 3 — НУЦ preset and SEO/GEO documentation
 

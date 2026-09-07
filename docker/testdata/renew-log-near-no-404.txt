@@ -1,0 +1,3 @@
+time="2026-09-07T12:00:00Z" level=error msg="Unable to obtain ACME certificate for domains \"stand.traefik-nuc.test\"" providerName=acme-pebble.acme
+acme: error: 403 :: urn:ietf:params:acme:error:unauthorized :: Non-200 status code from HTTP: http://stand.traefik-nuc.test:5002/.well-known/acme-challenge/abc123 returned 500
+timeout waiting for renewed serial and new captured CSR

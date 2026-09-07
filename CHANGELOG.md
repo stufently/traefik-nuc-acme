@@ -2,6 +2,9 @@
 
 ## 2026-09-07
 
+- Classifier near-miss fixtures now pin each of the three same-line race signs;
+  a log that lacks one sign, or splits them across lines, is not a retryable race.
+
 - `scripts/stand.sh renew-check` retries only the known ACME HTTP-01 race
   (`unauthorized` + `/.well-known/acme-challenge/` + `404` on one line),
   up to `STAND_RENEW_ATTEMPTS` (default 3). Any other failure still exits

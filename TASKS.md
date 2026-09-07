@@ -54,6 +54,29 @@ reimplementation would diverge silently. A guard reading a different file is
 worse than no guard — the absence of a check is visible, a check answering a
 different question is not.
 
+Accepted by hand 2026-09-07: all 12 criteria re-run independently (11 by
+`accept_run.py`; AC-010 refused there because the reported command had a
+trailing `printf` swallowing its exit code — the spec's own wording passes,
+run separately). Boundaries hold: 7 added lines in `cmd/traefik/traefik.go`,
+no new patch files. Live stand walked by hand — `csrSubject OK` is the first
+line of the container log (the entrypoint really does gate the start), the
+captured CSR carries `C=RU, L=Moscow, O=NUC Stand`, and renewal keeps it
+(serial 7D88D71121ECD0A8 → 7D6B2766B4FD2575).
+
+One test hole found and closed by me before the cross-review: the mutation
+`continue` → `return nil` in the resolver walk SURVIVED. A resolver without an
+`acme` section sorted before an invalid one (say a `tailscale` resolver named
+`a-…`) would have made the guard return OK and Traefik start with a broken
+subject — fail-open, the exact failure the milestone exists to prevent. The
+product was already correct; the tests never covered it. Added
+`TestCSRGuardKeepsWalkingPastNonACMEResolver` and a 14th gate mutation; gate is
+14/14 with every mutation failing on its own assert line.
+
+Cross-mutation review handed to Grok (opposite executor) in pane
+`gk-traefik-nuc-m3-cross`, clone `/home/deploy/exec-clones/traefik-nuc-m3-cross`,
+branch `m3-cross-review`, spec `docs/specs/m3-cross-review.md` (5 criteria).
+Merge waits on its verdict.
+
 ## Milestone 3 — НУЦ preset and SEO/GEO documentation
 
 - [ ] НУЦ configuration preset: `caServer`, `keyType=RSA2048`,

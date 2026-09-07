@@ -77,10 +77,10 @@ index 0000000..bc73702
 +}
 diff --git a/cmd/validatecsr/validatecsr_test.go b/cmd/validatecsr/validatecsr_test.go
 new file mode 100644
-index 0000000..fc73ae5
+index 0000000..46cd717
 --- /dev/null
 +++ b/cmd/validatecsr/validatecsr_test.go
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,212 @@
 +package validatecsr
 +
 +import (
@@ -131,6 +131,46 @@ index 0000000..fc73ae5
 +	err := Do(cfg)
 +	if err == nil || err.Error() != `invalid CSR subject in resolver "b-invalid": CSR subject country must contain exactly two ASCII letters` {
 +		t.Fatalf("second resolver was not rejected: %v", err)
++	}
++}
++
++// The walk is sorted so the reported resolver is the same on every run: with
++// map order the guard would name a different resolver each time.
++func TestCSRGuardNamesFirstResolverInSortedOrder(t *testing.T) {
++	cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{
++		"a-bad": {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Country: "RUS"}}},
++		"b-bad": {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Country: "RUX2"}}},
++	}}
++	err := Do(cfg)
++	if err == nil || !strings.Contains(err.Error(), `resolver "a-bad"`) {
++		t.Fatalf("guard did not report the first resolver in sorted order: %v", err)
++	}
++}
++
++// Validation is not about the country alone: a subject may be invalid on a
++// field the guard never looks at directly.
++func TestCSRGuardValidatesSubjectWithoutCountry(t *testing.T) {
++	cfg := &static.Configuration{CertificatesResolvers: map[string]static.CertificateResolver{
++		"nuc": {ACME: &acme.Configuration{CSRSubject: &acme.CSRSubject{Organization: strings.Repeat("o", 65)}}},
++	}}
++	err := Do(cfg)
++	if err == nil || !strings.Contains(err.Error(), "organization must not exceed 64 characters") {
++		t.Fatalf("subject without a country was not validated: %v", err)
++	}
++}
++
++// The whole point of the guard is reading the configuration Traefik reads:
++// the command must carry the caller's loader chain untouched, in order.
++func TestCSRGuardUsesGivenLoadersUnchanged(t *testing.T) {
++	loaders := []cli.ResourceLoader{&tcli.DeprecationLoader{}, &tcli.FileLoader{}, &tcli.FlagLoader{}, &tcli.EnvLoader{}}
++	got := NewCmd(&static.Configuration{}, loaders).Resources
++	if len(got) != len(loaders) {
++		t.Fatalf("loader chain resized: got %d, want %d", len(got), len(loaders))
++	}
++	for i := range loaders {
++		if got[i] != loaders[i] {
++			t.Fatalf("loader %d replaced: got %T, want %T", i, got[i], loaders[i])
++		}
 +	}
 +}
 +

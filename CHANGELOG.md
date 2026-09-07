@@ -11,8 +11,10 @@
 - Added guard tests for multiple resolvers, exit status, output, and configuration
   sources. Expanded the offline mutation gate from ten to fourteen mutations,
   checking each target assertion and restoring source and test bytes and hashes.
-  One of the fourteen covers a resolver without an ACME section: the walk must
-  continue past it, or an invalid subject sorted after it would go unchecked.
+  Four of the seventeen came from cross-review holes: the walk must continue
+  past a resolver without an ACME section, keep its sorted order so the reported
+  resolver is stable, validate subjects that set no country at all, and carry
+  the caller's loader chain unchanged in composition and order.
 
 ## 2026-09-06
 

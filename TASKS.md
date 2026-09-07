@@ -113,6 +113,33 @@ Still an assumption, marked as such in the spec and to be marked in the docs:
 that НУЦ requires `RSA2048` and rejects EC keys. Only accreditation could
 settle it, and issuing against the live CA stays a separate step "after access".
 
+Implementation accepted by hand: 12/12 re-run independently, the bundle built by
+the executor's own script verified by me down to a live handshake
+(`ssl_verify_result=0`, chain OK against the leaf), and the image accepted the
+preset with the bundle mounted. Nothing was sent to the live CA: registering an
+ACME account there is outward-facing and would create state at a state CA under
+a placeholder email, and the `caCertificates` mechanism is already proven by the
+Pebble stand from milestone 2.
+
+Two of my own defects found and fixed after the run:
+
+- **A hole in my own criterion.** The sixth criterion exercised only the ROOT
+  pin, so a script that never checked the intermediate's pin passed all twelve —
+  proven by mutation. That pin matters more, not less: the intermediate is
+  fetched over plain HTTP, so it is the only integrity control. The criterion
+  now exercises both pins and kills that mutation.
+- **I corrupted a clone myself** by running two mutation gates at once: the
+  second snapshots an already-mutated file as its "original" and cements it in
+  `finally`. The gate now takes an exclusive lock and refuses to start when the
+  upstream tree does not match the committed patch. Both refusals are proven.
+
+Cross-mutation review handed to Codex (opposite executor) in pane
+`cx-traefik-nuc-m4-cross`, clone `/home/deploy/exec-clones/traefik-nuc-m4-cross`,
+branch `m4-cross-review`, spec `docs/specs/m4-cross-review.md` (5 criteria).
+Because the deliverables are shell and YAML with no unit tests, the twelve
+acceptance criteria play the role of the test suite, and the review hunts
+corruptions that all twelve miss. Merge waits on its verdict.
+
 ## Milestone 5 — documentation (was part of milestone 3)
 
 - [ ] НУЦ configuration preset: `caServer`, `keyType=RSA2048`,

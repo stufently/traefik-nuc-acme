@@ -242,6 +242,11 @@ func (p *Provider) obtainCertificate(ctx context.Context, client certificateObta
 Мутацию на `context.Background()` НЕ добавляй: она эквивалентная (см. выше),
 убить её поведенческим тестом нельзя.
 
+⚠️ Порядок: гейт первым делом сверяет, что `git -C .upstream/traefik diff HEAD`
+посимвольно равен `patches/0001-csr-subject.patch`, и иначе отказывается работать
+(`upstream tree does not match …`). Значит патч из п.7 перегенерируй ДО прогона
+гейта, а не после, и повторяй перегенерацию после каждой правки кода.
+
 ### 7. Патч и журнал
 
 - `patches/0001-csr-subject.patch` перегенерировать:

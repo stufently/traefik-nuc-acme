@@ -166,6 +166,49 @@ a run. Its clone was untouched; the review carries no evidentiary weight.
 
 Merged to `main` and pushed.
 
+## Milestone 6 — DONE 2026-09-07 (issuance path coverage, renewal names)
+
+Executor `gk-traefik-nuc-m6`, spec `docs/specs/m6-provider-path-coverage.md`,
+10 criteria. Closes three of the four items deferred from the M1 cross-review:
+the duplicated `CSRSubject.IsEmpty()` block left `provider.go` for
+`obtainCertificate` behind a `certificateObtainer` interface, renewal now takes
+names from the certificate body (`ParsePEMBundle` + `ExtractDomains`) exactly as
+stock lego does, and the request context reaches `GetKeyType`.
+
+Accepted by hand: nine criteria re-run green independently, the mutation gate
+re-run by the coordinator, tests and `go vet` re-run, and the patch verified
+byte-for-byte against the tree.
+
+**A defect of the SPEC, not of the work: AC-009 is non-deterministic.** Five runs
+of the live stand gave three failures and two passes. Cause: traefik renews once
+at startup and re-checks only every 168h, so when the ACME challenge loses the
+race with router setup (`403 unauthorized … returned 404` on
+`/.well-known/acme-challenge/`), the next attempt falls outside the 180s window
+and `renew-check` times out. The only file that could fix it, `scripts/stand.sh`,
+is in the spec's own "do not touch" list — so the executor was right not to touch
+it. The criterion's INTENT was verified by hand: renewal happened, the serial
+changed (`0E6002FA…` → `0F5FFC33…`), subject `C=RU, L=Moscow, O=NUC Stand`.
+
+The cross-mutation run by Codex (opposite executor) returned "do not accept" and
+was right on two counts, both verified by hand in the clone before acting: with
+the dispatch narrowed to `Country` alone the whole package stayed green (a
+subject carrying only `organization` would have silently taken the stock path),
+and `ExtractDomains` swapped for `DNSNames` also stayed green (renewal would have
+dropped IP SANs and a CN absent from the SANs). One fix round closed both plus
+error propagation and context threading; the gate went 21 → 27, every mutation
+failing on its own assert line.
+
+Open follow-ups:
+
+- [ ] De-flake `scripts/stand.sh renew-check`: either force a renewal instead of
+      waiting for traefik's own 168h timer, or retry the ACME challenge before
+      the 180s window expires. Until then AC-009-style criteria fail about half
+      the time for reasons unrelated to the code under test.
+- [ ] Not reachable by unit tests, closed structurally by AC-007 instead: a
+      mutation that bypasses `p.obtainCertificate` inside `provider.go` survives,
+      because calling `resolveCertificate` needs a live ACME client. Revisit only
+      if the resolver itself becomes testable.
+
 ## Milestone 5 — documentation (was part of milestone 3)
 
 - [x] **DONE in milestone 4:** НУЦ configuration preset and its CA bundle.
@@ -269,19 +312,11 @@ itself is sound: 10/10 author mutations and 8/8 cross mutations killed, and the
 three stale cross-mutations that stopped applying after M1a were verified by
 hand to still be caught by the tests.
 
-- [ ] `resolveCertificate` / `resolveDefaultCertificate` have no test coverage:
-      breaking the `CSRSubject.IsEmpty()` branch directly in `provider.go` would
-      go unnoticed. This is a hole in the TESTS, not in the code; fix by
-      extracting the path choice into a pure function, the way renewal already
-      does it.
-- [ ] Renewal takes names from `Resource.Domains` (Traefik's own store), while
-      stock lego takes them from the certificate's SANs
-      (`certcrypto.ExtractDomains`). These diverge only if `acme.json` loses
-      `Domain` while the certificate body stays intact: stock would renew, our
-      path stops with "cannot build CSR without domains".
-- [ ] `GetKeyType` on the CSR issuance path is called with `context.Background()`
-      instead of the request context — no effect on the key type, only on logger
-      context.
+Three of the four items are closed by milestone M6 (`0e5a650`): the path choice
+now lives in `obtainCertificate` and is covered by tests, renewal takes names
+from the certificate body via `certcrypto.ExtractDomains`, and the request
+context reaches `GetKeyType`. The mutation gate went 17 → 27.
+
 - [ ] RDN ordering in `pkix.Name` is fixed by Go (C, O, OU, L, CN). If НУЦ
       compares the canonical DN byte for byte, this could diverge from a
       hand-built CSR. GUESS — never tested against the live CA.

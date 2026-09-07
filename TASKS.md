@@ -176,18 +176,12 @@ Merged to `main` and pushed.
       verification deferred until accreditation. Word it as a gap in ACCESS,
       never as an assumption or an oversight: a later session must see that
       nobody skipped a check, the check was not available to run.
-      **Acceptance runs against the Pebble stand, not against the live НУЦ.**
-      "Works against production НУЦ" is removed as a criterion: it depends on
-      accreditation nobody has confirmed, not on code quality. Ship the preset
-      and state plainly in the docs that the live CA is UNVERIFIED. Note also
-      that no mock CA can prove `C=RU` in the issued leaf — Pebble and Let's
-      Encrypt both drop the CSR subject — so against the live НУЦ that check
-      would be testing НУЦ's behaviour, not ours.
-- [ ] **CA bundle.** `nuc-acme.voskhod.ru` presents a certificate signed by a
-      Russian state root CA that is not in any standard trust store — plain
-      `curl` fails the TLS handshake before ACME even starts. Decide: ship the
-      root in the image, or document mounting it. Find the official source of
-      the root certificate first.
+      Note also that no mock CA can prove `C=RU` in the issued leaf — Pebble and
+      Let's Encrypt both drop the CSR subject — so even against the live НУЦ
+      that check would be testing НУЦ's behaviour, not ours.
+- [x] **DONE in milestone 4: CA bundle.** The root is fetched from gu-st.ru and
+      the issuing intermediate from the leaf's own AIA, both pinned by sha256,
+      and mounted rather than baked into the image.
 - [ ] `COMPATIBILITY.md`, README in EN + RU, FAQ blocks written to be quotable
       by LLMs, GitHub topics.
 - [ ] GitHub Pages — only if the site can be built locally in Docker and pushed

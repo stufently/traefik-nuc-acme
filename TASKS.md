@@ -182,8 +182,25 @@ Merged to `main` and pushed.
 - [x] **DONE in milestone 4: CA bundle.** The root is fetched from gu-st.ru and
       the issuing intermediate from the leaf's own AIA, both pinned by sha256,
       and mounted rather than baked into the image.
-- [ ] `COMPATIBILITY.md`, README in EN + RU, FAQ blocks written to be quotable
-      by LLMs, GitHub topics.
+- [x] **DONE 2026-09-07: `COMPATIBILITY.md`.** Measured, not asserted: the patch
+      applies to Traefik v3.7.13 and to none of the other fourteen releases
+      tested. Before v3.7.13 the renewal hunk has no `EnableCommonName` in
+      `RenewOptions` to anchor on; before v3.7.6 Traefik carries no lego v5 at
+      all. No v3.8 tags exist upstream. Research was commissioned from
+      `ask-codex research`, and its central claim re-checked by hand.
+- [ ] **README in RU — IN_PROGRESS since 2026-09-07.** Executor `cx-traefik-nuc-m5`,
+      spec `docs/specs/m5-readme-ru.md`, 12 criteria, checks in
+      `scripts/readme_parity.py`. The anti-fake criterion is the point of the
+      milestone: a copy of the English file passes headings, code blocks, URLs
+      and pins, and is caught only by the per-section Cyrillic check — probed,
+      the copy fails 14 sections of 15.
+      Cross-review here will be a MEANING check, not a mutation campaign:
+      mutating a translation measures nothing, but a second reader comparing
+      what the two files actually claim measures exactly the risk.
+- [ ] FAQ blocks and GitHub topics. **Recommended to drop** (coordinator, not
+      the owner): Wordstat shows no RU search demand for this subject, so the
+      SEO premise these items rest on is not there. Left for the owner to
+      confirm rather than removed.
 - [ ] GitHub Pages — only if the site can be built locally in Docker and pushed
       to a `gh-pages` branch without a workflow. Verify that before starting.
 

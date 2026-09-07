@@ -1,0 +1,1 @@
+acme: error: 400 :: urn:ietf:params:acme:error:malformed :: unauthorized request to http://stand.traefik-nuc.test:5002/.well-known/acme-challenge/abc123 returned 404

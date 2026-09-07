@@ -2,6 +2,13 @@
 
 ## 2026-09-07
 
+- The `renew-check` retry loop now has seven offline tests and a seven-mutation
+  gate, including fail-fast errors and exhausted retries. One case pins that a
+  new certificate serial without a fresh captured CSR is not a renewal: the loop
+  keeps retrying and ends exhausted. Additional log
+  fixtures cover a misleading unauthorized word, split signs, and a real race
+  after a near miss. The stand script can now be sourced without dispatching.
+
 - Classifier near-miss fixtures now pin each of the three same-line race signs;
   a log that lacks one sign, or splits them across lines, is not a retryable race.
 

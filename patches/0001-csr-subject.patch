@@ -295,10 +295,10 @@ index 0000000..46cd717
 +}
 diff --git a/pkg/provider/acme/csr.go b/pkg/provider/acme/csr.go
 new file mode 100644
-index 0000000..55640d5
+index 0000000..318369f
 --- /dev/null
 +++ b/pkg/provider/acme/csr.go
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,202 @@
 +package acme
 +
 +import (
@@ -413,11 +413,11 @@ index 0000000..55640d5
 +	return csr, nil
 +}
 +
-+func (p *Provider) obtainForCSRRequest(domains []string) (certificate.ObtainForCSRRequest, crypto.Signer, error) {
++func (p *Provider) obtainForCSRRequest(ctx context.Context, domains []string) (certificate.ObtainForCSRRequest, crypto.Signer, error) {
 +	if err := p.CSRSubject.Validate(); err != nil {
 +		return certificate.ObtainForCSRRequest{}, nil, err
 +	}
-+	key, err := certcrypto.GeneratePrivateKey(GetKeyType(context.Background(), p.KeyType))
++	key, err := certcrypto.GeneratePrivateKey(GetKeyType(ctx, p.KeyType))
 +	if err != nil {
 +		return certificate.ObtainForCSRRequest{}, nil, fmt.Errorf("generating CSR private key: %w", err)
 +	}
@@ -450,7 +450,11 @@ index 0000000..55640d5
 +	if err != nil {
 +		return nil, fmt.Errorf("parsing saved certificate private key: %w", err)
 +	}
-+	request, err := p.csrRequest(res.Domains, key)
++	certificates, err := certcrypto.ParsePEMBundle(res.Certificate)
++	if err != nil {
++		return nil, fmt.Errorf("parsing saved certificate: %w", err)
++	}
++	request, err := p.csrRequest(certcrypto.ExtractDomains(certificates[0]), key)
 +	if err != nil {
 +		return nil, err
 +	}
@@ -472,12 +476,37 @@ index 0000000..55640d5
 +	}
 +	return client.ObtainForCSR(ctx, *request)
 +}
++
++type certificateObtainer interface {
++	Obtain(context.Context, certificate.ObtainRequest) (*certificate.Resource, error)
++	ObtainForCSR(context.Context, certificate.ObtainForCSRRequest) (*certificate.Resource, error)
++}
++
++func (p *Provider) obtainCertificate(ctx context.Context, client certificateObtainer, domains []string) (*certificate.Resource, error) {
++	if p.CSRSubject.IsEmpty() {
++		request := certificate.ObtainRequest{
++			Domains:          domains,
++			Bundle:           true,
++			EmailAddresses:   p.EmailAddresses,
++			Profile:          p.Profile,
++			PreferredChain:   p.PreferredChain,
++			EnableCommonName: !p.DisableCommonName,
++			KeyType:          GetKeyType(ctx, p.KeyType),
++		}
++		return client.Obtain(ctx, request)
++	}
++	request, _, err := p.obtainForCSRRequest(ctx, domains)
++	if err != nil {
++		return nil, err
++	}
++	return client.ObtainForCSR(ctx, request)
++}
 diff --git a/pkg/provider/acme/csr_test.go b/pkg/provider/acme/csr_test.go
 new file mode 100644
-index 0000000..f4f7da1
+index 0000000..93f4551
 --- /dev/null
 +++ b/pkg/provider/acme/csr_test.go
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,438 @@
 +package acme
 +
 +import (
@@ -486,11 +515,16 @@ index 0000000..f4f7da1
 +	"crypto/ecdsa"
 +	"crypto/elliptic"
 +	"crypto/rand"
++	"crypto/x509"
++	"crypto/x509/pkix"
++	"encoding/pem"
 +	"errors"
++	"math/big"
 +	"net"
 +	"reflect"
 +	"strings"
 +	"testing"
++	"time"
 +
 +	"github.com/go-acme/lego/v5/certcrypto"
 +	"github.com/go-acme/lego/v5/certificate"
@@ -503,6 +537,26 @@ index 0000000..f4f7da1
 +		t.Fatal(err)
 +	}
 +	return key
++}
++
++func csrTestCertPEM(t *testing.T, key crypto.Signer, dnsNames []string) []byte {
++	t.Helper()
++	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
++	if err != nil {
++		t.Fatal(err)
++	}
++	template := &x509.Certificate{
++		SerialNumber: serial,
++		Subject:      pkix.Name{CommonName: dnsNames[0]},
++		DNSNames:     dnsNames,
++		NotBefore:    time.Now().Add(-time.Hour),
++		NotAfter:     time.Now().Add(24 * time.Hour),
++	}
++	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 +}
 +
 +func TestCSRSubjectCountry(t *testing.T) {
@@ -648,7 +702,7 @@ index 0000000..f4f7da1
 +
 +func TestCSRRequestPrivateKey(t *testing.T) {
 +	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}, KeyType: "EC256", Profile: "profile", PreferredChain: "chain", EmailAddresses: []string{"admin@example.org"}}}
-+	request, key, err := p.obtainForCSRRequest([]string{"example.org"})
++	request, key, err := p.obtainForCSRRequest(context.Background(), []string{"example.org"})
 +	if err != nil {
 +		t.Fatal(err)
 +	}
@@ -685,10 +739,28 @@ index 0000000..f4f7da1
 +	return c.result, c.err
 +}
 +
++// The double replaces only lego's network boundary; path selection and CSR preparation are real.
++type csrObtainClient struct {
++	obtain       *certificate.ObtainRequest
++	obtainForCSR *certificate.ObtainForCSRRequest
++	result       *certificate.Resource
++	err          error
++}
++
++func (c *csrObtainClient) Obtain(_ context.Context, request certificate.ObtainRequest) (*certificate.Resource, error) {
++	c.obtain = &request
++	return c.result, c.err
++}
++
++func (c *csrObtainClient) ObtainForCSR(_ context.Context, request certificate.ObtainForCSRRequest) (*certificate.Resource, error) {
++	c.obtainForCSR = &request
++	return c.result, c.err
++}
++
 +func TestCSRRenewalUsesCSR(t *testing.T) {
 +	key := csrTestKey(t)
 +	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}, KeyType: "RSA4096", DisableCommonName: true, EmailAddresses: []string{"new@example.org"}, Profile: "new-profile", PreferredChain: "new-chain"}}
-+	res := certificate.Resource{Domains: []string{"example.org", "www.example.org"}, PrivateKey: certcrypto.PEMEncode(key)}
++	res := certificate.Resource{Domains: []string{"example.org", "www.example.org"}, PrivateKey: certcrypto.PEMEncode(key), Certificate: csrTestCertPEM(t, key, []string{"example.org", "www.example.org"})}
 +	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
 +	result, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
 +	if client.renewed || client.request == nil {
@@ -741,7 +813,7 @@ index 0000000..f4f7da1
 +		t.Fatal("invalid saved key reached certificate client")
 +	}
 +	p.CSRSubject.Country = "RUS"
-+	if _, _, err := p.obtainForCSRRequest([]string{"example.org"}); err == nil {
++	if _, _, err := p.obtainForCSRRequest(context.Background(), []string{"example.org"}); err == nil {
 +		t.Fatal("issuance accepted invalid subject")
 +	}
 +}
@@ -750,7 +822,8 @@ index 0000000..f4f7da1
 +	wantErr := errors.New("CA failure")
 +	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
 +	client := &csrRenewalClient{err: wantErr}
-+	res := certificate.Resource{Domains: []string{"example.org"}, PrivateKey: certcrypto.PEMEncode(csrTestKey(t))}
++	key := csrTestKey(t)
++	res := certificate.Resource{Domains: []string{"example.org"}, PrivateKey: certcrypto.PEMEncode(key), Certificate: csrTestCertPEM(t, key, []string{"example.org"})}
 +	if _, err := p.renewCertificate(context.Background(), client, res, nil); !errors.Is(err, wantErr) {
 +		t.Fatalf("lost client error: %v", err)
 +	}
@@ -762,8 +835,118 @@ index 0000000..f4f7da1
 +		t.Fatalf("invalid subject not rejected at initialization: %v", err)
 +	}
 +}
++
++func TestObtainEmptySubjectUsesStock(t *testing.T) {
++	domains := []string{"example.org", "www.example.org"}
++	for _, subject := range []*CSRSubject{nil, {}} {
++		p := &Provider{Configuration: &Configuration{
++			CSRSubject:     subject,
++			KeyType:        "EC256",
++			EmailAddresses: []string{"admin@example.org"},
++			Profile:        "profile",
++			PreferredChain: "chain",
++		}}
++		client := &csrObtainClient{result: &certificate.Resource{Certificate: []byte("issued")}}
++		got, err := p.obtainCertificate(context.Background(), client, domains)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got != client.result {
++			t.Fatal("stock obtain result not returned")
++		}
++		if client.obtainForCSR != nil || client.obtain == nil {
++			t.Fatal("empty subject used ObtainForCSR instead of Obtain")
++		}
++		if !reflect.DeepEqual(client.obtain.Domains, domains) {
++			t.Fatalf("ObtainRequest domains = %v, want %v", client.obtain.Domains, domains)
++		}
++		if !client.obtain.Bundle || !reflect.DeepEqual(client.obtain.EmailAddresses, []string{"admin@example.org"}) || client.obtain.Profile != "profile" || client.obtain.PreferredChain != "chain" || !client.obtain.EnableCommonName || client.obtain.KeyType != certcrypto.EC256 {
++			t.Fatalf("ObtainRequest options lost: %+v", client.obtain)
++		}
++	}
++}
++
++func TestObtainNonEmptySubjectUsesCSR(t *testing.T) {
++	domains := []string{"example.org", "www.example.org"}
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}, KeyType: "EC256"}}
++	client := &csrObtainClient{result: &certificate.Resource{Certificate: []byte("issued")}}
++	got, err := p.obtainCertificate(context.Background(), client, domains)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got != client.result {
++		t.Fatal("CSR obtain result not returned")
++	}
++	if client.obtain != nil || client.obtainForCSR == nil {
++		t.Fatal("nonempty subject used Obtain instead of ObtainForCSR")
++	}
++	if !reflect.DeepEqual(client.obtainForCSR.CSR.Subject.Country, []string{"RU"}) {
++		t.Fatalf("CSR country = %v, want [RU]", client.obtainForCSR.CSR.Subject.Country)
++	}
++	if !reflect.DeepEqual(client.obtainForCSR.CSR.DNSNames, domains) {
++		t.Fatalf("CSR DNS names = %v, want %v", client.obtainForCSR.CSR.DNSNames, domains)
++	}
++	if err := client.obtainForCSR.CSR.CheckSignature(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestObtainInvalidSubjectSkipsClient(t *testing.T) {
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RUS"}}}
++	client := &csrObtainClient{result: &certificate.Resource{Certificate: []byte("issued")}}
++	if _, err := p.obtainCertificate(context.Background(), client, []string{"example.org"}); err == nil {
++		t.Fatal("invalid subject accepted on obtain path")
++	}
++	if client.obtain != nil || client.obtainForCSR != nil {
++		t.Fatal("invalid subject reached certificate client")
++	}
++}
++
++func TestCSRRenewalDomainsFromCertificateWhenStoreEmpty(t *testing.T) {
++	key := csrTestKey(t)
++	dnsNames := []string{"example.org", "www.example.org"}
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	res := certificate.Resource{
++		PrivateKey:  certcrypto.PEMEncode(key),
++		Certificate: csrTestCertPEM(t, key, dnsNames),
++	}
++	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++	_, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
++	var got []string
++	if client.request != nil {
++		got = client.request.CSR.DNSNames
++	}
++	if !reflect.DeepEqual(got, dnsNames) {
++		t.Fatalf("renewal CSR DNS names = %v, want %v", got, dnsNames)
++	}
++	if err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCSRRenewalDomainsFollowCertificateNotStore(t *testing.T) {
++	key := csrTestKey(t)
++	dnsNames := []string{"example.org", "www.example.org"}
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	res := certificate.Resource{
++		Domains:     []string{"store.example"},
++		PrivateKey:  certcrypto.PEMEncode(key),
++		Certificate: csrTestCertPEM(t, key, dnsNames),
++	}
++	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++	_, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if client.request == nil {
++		t.Fatal("renewal did not build a CSR from the certificate")
++	}
++	if !reflect.DeepEqual(client.request.CSR.DNSNames, dnsNames) {
++		t.Fatalf("renewal followed store domains = %v, want %v", client.request.CSR.DNSNames, dnsNames)
++	}
++}
 diff --git a/pkg/provider/acme/provider.go b/pkg/provider/acme/provider.go
-index 4887015..468099c 100644
+index 4887015..4b73632 100644
 --- a/pkg/provider/acme/provider.go
 +++ b/pkg/provider/acme/provider.go
 @@ -62,6 +62,8 @@ type Configuration struct {
@@ -786,7 +969,7 @@ index 4887015..468099c 100644
  	var err error
  	p.account, err = p.Store.GetAccount(p.ResolverName)
  	if err != nil {
-@@ -682,17 +688,26 @@ func (p *Provider) resolveDefaultCertificate(ctx context.Context, domains []stri
+@@ -682,17 +688,7 @@ func (p *Provider) resolveDefaultCertificate(ctx context.Context, domains []stri
  		return nil, fmt.Errorf("cannot get ACME client %w", err)
  	}
  
@@ -799,31 +982,13 @@ index 4887015..468099c 100644
 -		EnableCommonName: !p.DisableCommonName,
 -		KeyType:          GetKeyType(ctx, p.KeyType),
 -	}
-+	var cert *certificate.Resource
-+	if p.CSRSubject.IsEmpty() {
-+		request := certificate.ObtainRequest{
-+			Domains:          domains,
-+			Bundle:           true,
-+			EmailAddresses:   p.EmailAddresses,
-+			Profile:          p.Profile,
-+			PreferredChain:   p.PreferredChain,
-+			EnableCommonName: !p.DisableCommonName,
-+			KeyType:          GetKeyType(ctx, p.KeyType),
-+		}
- 
+-
 -	cert, err := client.Certificate.Obtain(ctx, request)
-+		cert, err = client.Certificate.Obtain(ctx, request)
-+	} else {
-+		var request certificate.ObtainForCSRRequest
-+		request, _, err = p.obtainForCSRRequest(domains)
-+		if err == nil {
-+			cert, err = client.Certificate.ObtainForCSR(ctx, request)
-+		}
-+	}
++	cert, err := p.obtainCertificate(ctx, client.Certificate, domains)
  	if err != nil {
  		return nil, fmt.Errorf("unable to generate a certificate for the domains %v: %w", domains, err)
  	}
-@@ -730,17 +745,26 @@ func (p *Provider) resolveCertificate(ctx context.Context, domain types.Domain,
+@@ -730,17 +726,7 @@ func (p *Provider) resolveCertificate(ctx context.Context, domain types.Domain,
  		return types.Domain{}, nil, fmt.Errorf("cannot get ACME client %w", err)
  	}
  
@@ -836,31 +1001,13 @@ index 4887015..468099c 100644
 -		EnableCommonName: !p.DisableCommonName,
 -		KeyType:          GetKeyType(ctx, p.KeyType),
 -	}
-+	var cert *certificate.Resource
-+	if p.CSRSubject.IsEmpty() {
-+		request := certificate.ObtainRequest{
-+			Domains:          domains,
-+			Bundle:           true,
-+			EmailAddresses:   p.EmailAddresses,
-+			Profile:          p.Profile,
-+			PreferredChain:   p.PreferredChain,
-+			EnableCommonName: !p.DisableCommonName,
-+			KeyType:          GetKeyType(ctx, p.KeyType),
-+		}
- 
+-
 -	cert, err := client.Certificate.Obtain(ctx, request)
-+		cert, err = client.Certificate.Obtain(ctx, request)
-+	} else {
-+		var request certificate.ObtainForCSRRequest
-+		request, _, err = p.obtainForCSRRequest(domains)
-+		if err == nil {
-+			cert, err = client.Certificate.ObtainForCSR(ctx, request)
-+		}
-+	}
++	cert, err := p.obtainCertificate(ctx, client.Certificate, domains)
  	if err != nil {
  		return types.Domain{}, nil, fmt.Errorf("unable to generate a certificate for the domains %v: %w", uncheckedDomains, err)
  	}
-@@ -944,7 +968,7 @@ func (p *Provider) renewCertificates(ctx context.Context, renewPeriod time.Durat
+@@ -944,7 +930,7 @@ func (p *Provider) renewCertificates(ctx context.Context, renewPeriod time.Durat
  			EnableCommonName: !p.DisableCommonName,
  		}
  

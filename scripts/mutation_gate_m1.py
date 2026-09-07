@@ -177,6 +177,34 @@ MUTATIONS = (
         UPSTREAM / "cmd/validatecsr/validatecsr_test.go",
         "github.com/traefik/traefik/v3/cmd/validatecsr",
     ),
+    Mutation(
+        "Subject ignored on the obtain path",
+        "	if p.CSRSubject.IsEmpty() {\n		request := certificate.ObtainRequest{",
+        "	if true {\n		request := certificate.ObtainRequest{",
+        "TestObtainNonEmptySubjectUsesCSR",
+        't.Fatal("nonempty subject used Obtain instead of ObtainForCSR")',
+    ),
+    Mutation(
+        "CSR path taken for an empty subject",
+        "	if p.CSRSubject.IsEmpty() {\n		request := certificate.ObtainRequest{",
+        "	if false {\n		request := certificate.ObtainRequest{",
+        "TestObtainEmptySubjectUsesStock",
+        't.Fatal("empty subject used ObtainForCSR instead of Obtain")',
+    ),
+    Mutation(
+        "Renewal domains taken from the store",
+        "p.csrRequest(certcrypto.ExtractDomains(certificates[0]), key)",
+        "p.csrRequest(res.Domains, key); _ = certificates",
+        "TestCSRRenewalDomainsFromCertificateWhenStoreEmpty",
+        't.Fatalf("renewal CSR DNS names = %v, want %v", got, dnsNames)',
+    ),
+    Mutation(
+        "Obtain request loses the domains",
+        "			Domains:          domains,\n			Bundle:           true,",
+        "			Domains:          nil,\n			Bundle:           true,",
+        "TestObtainEmptySubjectUsesStock",
+        't.Fatalf("ObtainRequest domains = %v, want %v", client.obtain.Domains, domains)',
+    ),
 )
 
 

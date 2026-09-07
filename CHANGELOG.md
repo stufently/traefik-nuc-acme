@@ -2,6 +2,10 @@
 
 ## 2026-09-07
 
+- Issuance path selection (`Obtain` vs `ObtainForCSR`) is now a tested helper
+  (`obtainCertificate`). Renewal takes names from the saved certificate body,
+  matching stock lego, instead of the `Domain` field in storage.
+
 - `scripts/nuc_preset_checks.sh` now skips the argument-boundary check with a
   stated reason when upstream is not staged in `.upstream/traefik`, instead of
   reporting the quoting defect it cannot look for. Probed both ways: with

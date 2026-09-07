@@ -50,6 +50,62 @@ certificatesResolvers:
 Every `csrSubject` field is optional; omitting the whole block reproduces stock
 Traefik behaviour byte for byte.
 
+## НУЦ preset
+
+`presets/nuc.yml` is a static Traefik configuration aimed at
+[НУЦ](https://nuc-acme.voskhod.ru) (`https://nuc-acme.voskhod.ru/acme/api/v1/directory`).
+Copy it, replace the `REPLACE-ME` values (`email`, `organization`, `locality`,
+storage path), and keep `csrSubject.country: RU`.
+
+**Live НУЦ is UNVERIFIED.** The directory URL, the TLS chain, and the absence
+of EAB were checked on 2026-09-07. No certificate has been issued or renewed
+against the production CA — that step needs accreditation nobody here has.
+`keyType: RSA2048` is an assumption from public RSA DV docs, not a measured
+rejection of EC keys. Treat the preset as a starting point, not a proven
+production config. Боевой НУЦ не проверен.
+
+### CA bundle (not baked into the image)
+
+`nuc-acme.voskhod.ru` is signed by the Russian Trusted Root CA (Минцифры). That
+root is in no standard trust store, so a plain `curl` fails the handshake
+before ACME starts. The issuing Sub CA has already rotated once (2022 → 2024).
+A copy baked into the image would silently go stale on the next rotation: the
+handshake would fail and nothing would point at an outdated file inside the
+image. The bundle is therefore built by a script with sha256 pins and mounted
+from outside.
+
+```bash
+scripts/nuc-ca-bundle.sh -o nuc-ca.pem
+```
+
+`--root-sha256` / `--sub-sha256` override the pins after a rotation, without
+editing the script. A pin mismatch exits non-zero and does not create or
+replace the destination file.
+
+Mount the preset and the bundle, then start Traefik (the image entrypoint
+validates `csrSubject` first):
+
+```bash
+docker build -t traefik-nuc-acme:3.7.13-nuc.1 -f Dockerfile .
+docker run --rm \
+  -v "$PWD/presets/nuc.yml:/etc/traefik/traefik.yml:ro" \
+  -v "$PWD/nuc-ca.pem:/etc/traefik/ca/nuc-ca.pem:ro" \
+  -v acme-data:/data \
+  -p 80:80 -p 443:443 \
+  traefik-nuc-acme:3.7.13-nuc.1
+```
+
+### Trap: the 2022 Sub CA is not the issuer
+
+Do not use the widely copied
+`https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt` (serial
+`1002`, issued 2022). It is **not** the issuer of the current leaf: that
+file's SKI is `D1:E1:71:0D…`, the leaf's AKI is `77:3D:D9:39…`. Take the
+issuer from the leaf's Authority Information Access (AIA):
+`http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt` (PEM despite the `.crt`
+extension — do not decode it as DER). The working bundle is that Sub CA plus
+`https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt`.
+
 ## Validation before startup
 
 Stock Traefik skips an ACME resolver that fails initialization and keeps the
@@ -99,9 +155,10 @@ Machine-readable: [`upstream.lock`](upstream.lock).
 
 ## Status
 
-Milestone 3: fail-closed CSR subject validation before startup, a patched image,
-and a Pebble integration stand. The НУЦ preset
-and published documentation come later.
+Milestone 4: НУЦ preset (`presets/nuc.yml`) and an externally mounted CA
+bundle (`scripts/nuc-ca-bundle.sh`). Live issuance against НУЦ remains
+UNVERIFIED. Earlier milestones: fail-closed CSR subject validation before
+startup, a patched image, and a Pebble integration stand.
 
 ## Docker image
 

@@ -24,4 +24,21 @@ export GOCACHE="$root/.gocache"
 export GOFLAGS=-mod=mod
 export GOPROXY=off
 
+# `go -C` also changes the child CWD, so a relative --configfile would resolve
+# inside .upstream/traefik instead of the caller's directory. Build there, run
+# here, so repo-relative paths such as presets/nuc.yml work.
+if [ "${1:-}" = "run" ]; then
+    shift
+    pkg="${1:-}"
+    if [ -z "$pkg" ]; then
+        echo "usage: scripts/upstream-go.sh run <package> [args...]" >&2
+        exit 2
+    fi
+    shift
+    mkdir -p "$root/.gocache"
+    bin="$root/.gocache/upstream-run-bin"
+    go -C "$upstream" build -o "$bin" "$pkg"
+    exec "$bin" "$@"
+fi
+
 exec go -C "$upstream" "$@"

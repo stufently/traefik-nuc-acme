@@ -1,0 +1,43 @@
+# Traefik static configuration for НУЦ (Национальный удостоверяющий центр,
+# nuc-acme.voskhod.ru). Copy this file, replace the REPLACE-ME values, and
+# mount it as Traefik's static config together with the CA bundle from
+# scripts/nuc-ca-bundle.sh.
+#
+# Live issuance against НУЦ is UNVERIFIED: no certificate has been obtained
+# from this CA with this preset. The directory URL, TLS chain, and the
+# absence of EAB were checked on 2026-09-07; issue and renew were not.
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  nuc:
+    acme:
+      # RFC 8555 directory, verified HTTP 200 on 2026-09-07.
+      # meta is null; EAB is not required (lego treats JSON null as a zero Meta).
+      caServer: https://nuc-acme.voskhod.ru/acme/api/v1/directory
+      # ASSUMPTION, not a measured fact: public НУЦ docs talk about RSA DV.
+      # Whether the CA rejects EC keys has not been checked (no accreditation).
+      keyType: RSA2048
+      # REPLACE-ME: contact email used for the ACME account.
+      email: "replace-me@example.com"
+      # REPLACE-ME: path inside the container; mount a writable volume here.
+      storage: /data/acme.json
+      # Mount the bundle produced by scripts/nuc-ca-bundle.sh at this path.
+      # The image does not ship the file: the issuing Sub CA already rotated
+      # (2022 → 2024), and a baked-in copy would fail the handshake with no
+      # hint that the file inside the image had gone stale.
+      caCertificates:
+        - /etc/traefik/ca/nuc-ca.pem
+      httpChallenge:
+        entryPoint: web
+      csrSubject:
+        # Required by НУЦ (the reason this patch exists). Do not change.
+        country: RU
+        # REPLACE-ME: your organization. Example only.
+        organization: "Example LLC"
+        # REPLACE-ME: your locality. Example only.
+        locality: Moscow

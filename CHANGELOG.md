@@ -2,6 +2,16 @@
 
 ## 2026-09-07
 
+- Added a НУЦ static-config preset (`presets/nuc.yml`) with the verified ACME
+  directory URL, `keyType: RSA2048` (assumption), `csrSubject.country: RU`, and
+  a mount path for the CA bundle. Live issuance against НУЦ is UNVERIFIED.
+- Added `scripts/nuc-ca-bundle.sh` to download the Russian Trusted Root CA and
+  the 2024 issuing Sub CA (from the leaf AIA, not the 2022 gu-st.ru Sub CA),
+  pin both by sha256, and write a PEM bundle atomically. The bundle is not
+  baked into the image.
+- `scripts/upstream-go.sh run` now executes the binary in the caller's working
+  directory so repo-relative `--configfile` paths resolve.
+
 - Added `validate-csr-subject` with Traefik's shared configuration loaders and
   the existing CSR subject validation rules. Invalid subjects exit with 1 and
   identify the resolver on stderr; valid and empty subjects return `csrSubject OK`.

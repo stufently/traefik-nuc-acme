@@ -41,7 +41,7 @@ p.CSRSubject.IsEmpty() { … Obtain … } else { … ObtainForCSR … }`. Ни �
 `renewalForCSRRequest` (`csr.go:144`) строит CSR по `res.Domains` — это поле
 ХРАНИЛИЩА Traefik. Сток-lego в `Renew` домены из `certRes.Domains` не берёт
 вообще: он разбирает тело сертификата и зовёт `certcrypto.ExtractDomains(x509Cert)`
-(`certificate/certificates.go:613` в lego v5.4.1; `certRes.Domains` там уходит
+(`certificate/certificates.go:612` в lego v5.4.1; `certRes.Domains` там уходит
 только в текст лога и в текст ошибки).
 
 Расходятся эти два источника ровно в одном случае: `acme.json` потерял `Domain`,

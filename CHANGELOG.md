@@ -5,6 +5,11 @@
 - Issuance path selection (`Obtain` vs `ObtainForCSR`) is now a tested helper
   (`obtainCertificate`). Renewal takes names from the saved certificate body,
   matching stock lego, instead of the `Domain` field in storage.
+- Tests now cover a CSR subject that sets organization, unit, or locality
+  without a country; renewal names taken from CN and IP SAN as well as DNS;
+  a broken stored certificate as a parse error rather than the stock path;
+  obtain-path errors reaching the caller; and the request context on
+  `ObtainForCSR`.
 
 - `scripts/nuc_preset_checks.sh` now skips the argument-boundary check with a
   stated reason when upstream is not staged in `.upstream/traefik`, instead of

@@ -205,6 +205,48 @@ MUTATIONS = (
         "TestObtainEmptySubjectUsesStock",
         't.Fatalf("ObtainRequest domains = %v, want %v", client.obtain.Domains, domains)',
     ),
+    Mutation(
+        "Path chosen only by Country (obtain)",
+        "	if p.CSRSubject.IsEmpty() {\n		request := certificate.ObtainRequest{",
+        "	if p.CSRSubject == nil || p.CSRSubject.Country == \"\" {\n		request := certificate.ObtainRequest{",
+        "TestObtainSubjectWithoutCountryUsesCSR",
+        't.Fatalf("subject without country used Obtain instead of ObtainForCSR: %+v", subject)',
+    ),
+    Mutation(
+        "Path chosen only by Country (renewal)",
+        "	if p.CSRSubject.IsEmpty() {\n		return nil, nil",
+        "	if p.CSRSubject == nil || p.CSRSubject.Country == \"\" {\n		return nil, nil",
+        "TestRenewalSubjectWithoutCountryUsesCSR",
+        't.Fatalf("subject without country used Renew instead of ObtainForCSR: %+v", subject)',
+    ),
+    Mutation(
+        "Renewal domains reduced to DNS names",
+        "certcrypto.ExtractDomains(certificates[0])",
+        "certificates[0].DNSNames",
+        "TestCSRRenewalDomainsIncludeCommonNameAndIPSAN",
+        't.Fatalf("renewal CSR domains = %v, want %v", got, want)',
+    ),
+    Mutation(
+        "Broken stored certificate ignored on renewal",
+        '		return nil, fmt.Errorf("parsing saved certificate: %w", err)',
+        "		return nil, nil",
+        "TestCSRRenewalBrokenCertificateIsError",
+        't.Fatalf("broken stored certificate error = %v", err)',
+    ),
+    Mutation(
+        "CA error swallowed on the CSR path",
+        "	request, _, err := p.obtainForCSRRequest(ctx, domains)\n	if err != nil {\n		return nil, err\n	}",
+        "	request, _, err := p.obtainForCSRRequest(ctx, domains)\n	if err != nil {\n		return nil, nil\n	}",
+        "TestObtainCSRPathReturnsError",
+        't.Fatalf("invalid subject error not returned: got=%v err=%v", got, err)',
+    ),
+    Mutation(
+        "Renewal request loses the request context",
+        "return client.ObtainForCSR(ctx, *request)",
+        "return client.ObtainForCSR(context.Background(), *request)",
+        "TestRenewalObtainForCSRKeepsRequestContext",
+        't.Fatalf("renewal ObtainForCSR context value = %v, want renew", client.ctx.Value(csrRequestContextKey{}))',
+    ),
 )
 
 

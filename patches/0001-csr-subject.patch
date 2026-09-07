@@ -503,10 +503,10 @@ index 0000000..318369f
 +}
 diff --git a/pkg/provider/acme/csr_test.go b/pkg/provider/acme/csr_test.go
 new file mode 100644
-index 0000000..93f4551
+index 0000000..aa4e89f
 --- /dev/null
 +++ b/pkg/provider/acme/csr_test.go
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,585 @@
 +package acme
 +
 +import (
@@ -541,14 +541,20 @@ index 0000000..93f4551
 +
 +func csrTestCertPEM(t *testing.T, key crypto.Signer, dnsNames []string) []byte {
 +	t.Helper()
++	return csrTestLeafPEM(t, key, dnsNames[0], dnsNames, nil)
++}
++
++func csrTestLeafPEM(t *testing.T, key crypto.Signer, cn string, dnsNames []string, ips []net.IP) []byte {
++	t.Helper()
 +	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 +	if err != nil {
 +		t.Fatal(err)
 +	}
 +	template := &x509.Certificate{
 +		SerialNumber: serial,
-+		Subject:      pkix.Name{CommonName: dnsNames[0]},
++		Subject:      pkix.Name{CommonName: cn},
 +		DNSNames:     dnsNames,
++		IPAddresses:  ips,
 +		NotBefore:    time.Now().Add(-time.Hour),
 +		NotAfter:     time.Now().Add(24 * time.Hour),
 +	}
@@ -723,6 +729,7 @@ index 0000000..93f4551
 +
 +// The double replaces only lego's network boundary; CSR preparation and dispatch are real.
 +type csrRenewalClient struct {
++	ctx     context.Context
 +	request *certificate.ObtainForCSRRequest
 +	renewed bool
 +	result  *certificate.Resource
@@ -734,25 +741,29 @@ index 0000000..93f4551
 +	return c.result, c.err
 +}
 +
-+func (c *csrRenewalClient) ObtainForCSR(_ context.Context, request certificate.ObtainForCSRRequest) (*certificate.Resource, error) {
++func (c *csrRenewalClient) ObtainForCSR(ctx context.Context, request certificate.ObtainForCSRRequest) (*certificate.Resource, error) {
++	c.ctx = ctx
 +	c.request = &request
 +	return c.result, c.err
 +}
 +
 +// The double replaces only lego's network boundary; path selection and CSR preparation are real.
 +type csrObtainClient struct {
++	ctx          context.Context
 +	obtain       *certificate.ObtainRequest
 +	obtainForCSR *certificate.ObtainForCSRRequest
 +	result       *certificate.Resource
 +	err          error
 +}
 +
-+func (c *csrObtainClient) Obtain(_ context.Context, request certificate.ObtainRequest) (*certificate.Resource, error) {
++func (c *csrObtainClient) Obtain(ctx context.Context, request certificate.ObtainRequest) (*certificate.Resource, error) {
++	c.ctx = ctx
 +	c.obtain = &request
 +	return c.result, c.err
 +}
 +
-+func (c *csrObtainClient) ObtainForCSR(_ context.Context, request certificate.ObtainForCSRRequest) (*certificate.Resource, error) {
++func (c *csrObtainClient) ObtainForCSR(ctx context.Context, request certificate.ObtainForCSRRequest) (*certificate.Resource, error) {
++	c.ctx = ctx
 +	c.obtainForCSR = &request
 +	return c.result, c.err
 +}
@@ -943,6 +954,142 @@ index 0000000..93f4551
 +	}
 +	if !reflect.DeepEqual(client.request.CSR.DNSNames, dnsNames) {
 +		t.Fatalf("renewal followed store domains = %v, want %v", client.request.CSR.DNSNames, dnsNames)
++	}
++}
++
++func TestObtainSubjectWithoutCountryUsesCSR(t *testing.T) {
++	domains := []string{"example.org"}
++	for _, subject := range []*CSRSubject{
++		{Organization: "Org"},
++		{OrganizationalUnit: "Unit"},
++		{Locality: "City"},
++	} {
++		p := &Provider{Configuration: &Configuration{CSRSubject: subject, KeyType: "EC256"}}
++		client := &csrObtainClient{result: &certificate.Resource{Certificate: []byte("issued")}}
++		_, err := p.obtainCertificate(context.Background(), client, domains)
++		if client.obtain != nil || client.obtainForCSR == nil {
++			t.Fatalf("subject without country used Obtain instead of ObtainForCSR: %+v", subject)
++		}
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++}
++
++func TestRenewalSubjectWithoutCountryUsesCSR(t *testing.T) {
++	key := csrTestKey(t)
++	certPEM := csrTestCertPEM(t, key, []string{"example.org"})
++	for _, subject := range []*CSRSubject{
++		{Organization: "Org"},
++		{OrganizationalUnit: "Unit"},
++		{Locality: "City"},
++	} {
++		p := &Provider{Configuration: &Configuration{CSRSubject: subject}}
++		client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++		res := certificate.Resource{PrivateKey: certcrypto.PEMEncode(key), Certificate: certPEM}
++		_, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
++		if client.renewed || client.request == nil {
++			t.Fatalf("subject without country used Renew instead of ObtainForCSR: %+v", subject)
++		}
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++}
++
++func TestCSRRenewalDomainsIncludeCommonNameAndIPSAN(t *testing.T) {
++	key := csrTestKey(t)
++	ip := net.ParseIP("203.0.113.10")
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	res := certificate.Resource{
++		PrivateKey:  certcrypto.PEMEncode(key),
++		Certificate: csrTestLeafPEM(t, key, "cn.example.org", []string{"www.example.org"}, []net.IP{ip}),
++	}
++	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++	_, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
++	want := []string{"cn.example.org", "www.example.org", "203.0.113.10"}
++	var got []string
++	if client.request != nil {
++		got = certcrypto.ExtractDomainsCSR(client.request.CSR)
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("renewal CSR domains = %v, want %v", got, want)
++	}
++	if err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCSRRenewalBrokenCertificateIsError(t *testing.T) {
++	key := csrTestKey(t)
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++	res := certificate.Resource{PrivateKey: certcrypto.PEMEncode(key), Certificate: []byte("not a certificate")}
++	got, err := p.renewCertificate(context.Background(), client, res, &certificate.RenewOptions{})
++	if err == nil || !strings.Contains(err.Error(), "parsing saved certificate") {
++		t.Fatalf("broken stored certificate error = %v", err)
++	}
++	if client.renewed || client.request != nil {
++		t.Fatal("broken stored certificate reached certificate client")
++	}
++	if got != nil {
++		t.Fatal("broken stored certificate returned a resource")
++	}
++}
++
++func TestObtainCSRPathReturnsError(t *testing.T) {
++	invalid := &csrObtainClient{result: &certificate.Resource{Certificate: []byte("issued")}}
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RUS"}}}
++	got, err := p.obtainCertificate(context.Background(), invalid, []string{"example.org"})
++	if got != nil || err == nil || !strings.Contains(err.Error(), "exactly two ASCII letters") {
++		t.Fatalf("invalid subject error not returned: got=%v err=%v", got, err)
++	}
++	if invalid.obtain != nil || invalid.obtainForCSR != nil {
++		t.Fatal("invalid subject reached certificate client")
++	}
++
++	wantErr := errors.New("CA obtain failure")
++	client := &csrObtainClient{err: wantErr}
++	p = &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	got, err = p.obtainCertificate(context.Background(), client, []string{"example.org"})
++	if got != nil || !errors.Is(err, wantErr) {
++		t.Fatalf("CSR obtain CA error not returned: got=%v err=%v", got, err)
++	}
++}
++
++type csrRequestContextKey struct{}
++
++func TestObtainForCSRKeepsRequestContext(t *testing.T) {
++	ctx := context.WithValue(context.Background(), csrRequestContextKey{}, "obtain")
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	client := &csrObtainClient{result: &certificate.Resource{Certificate: []byte("issued")}}
++	_, err := p.obtainCertificate(ctx, client, []string{"example.org"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if client.obtainForCSR == nil {
++		t.Fatal("obtain path did not call ObtainForCSR")
++	}
++	if client.ctx == nil || client.ctx.Value(csrRequestContextKey{}) != "obtain" {
++		t.Fatalf("obtain ObtainForCSR context value = %v, want obtain", client.ctx.Value(csrRequestContextKey{}))
++	}
++}
++
++func TestRenewalObtainForCSRKeepsRequestContext(t *testing.T) {
++	key := csrTestKey(t)
++	ctx := context.WithValue(context.Background(), csrRequestContextKey{}, "renew")
++	p := &Provider{Configuration: &Configuration{CSRSubject: &CSRSubject{Country: "RU"}}}
++	client := &csrRenewalClient{result: &certificate.Resource{Certificate: []byte("result")}}
++	res := certificate.Resource{PrivateKey: certcrypto.PEMEncode(key), Certificate: csrTestCertPEM(t, key, []string{"example.org"})}
++	_, err := p.renewCertificate(ctx, client, res, &certificate.RenewOptions{})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if client.request == nil {
++		t.Fatal("renewal path did not call ObtainForCSR")
++	}
++	if client.ctx == nil || client.ctx.Value(csrRequestContextKey{}) != "renew" {
++		t.Fatalf("renewal ObtainForCSR context value = %v, want renew", client.ctx.Value(csrRequestContextKey{}))
 +	}
 +}
 diff --git a/pkg/provider/acme/provider.go b/pkg/provider/acme/provider.go

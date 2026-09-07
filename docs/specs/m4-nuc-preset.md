@@ -28,14 +28,19 @@
   `1002`, выпущен в 2022) **НЕ является издателем** текущего листа: его SKI
   `D1:E1:71:0D…`, а AKI листа `77:3D:D9:39…`. Настоящий издатель берётся из
   AIA самого листа: `http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt`
-  (DER, выпущен 2024-07-15, годен до 2029-07-19, SKI `77:3D:D9:39…`).
+  (выпущен 2024-07-15, годен до 2029-07-19, SKI `77:3D:D9:39…`).
+- **🚩 Файл отдаётся в PEM, несмотря на расширение `.crt`** (проверено `file`
+  и `openssl x509 -in … -noout`). Конвертация из DER не нужна и НЕ РАБОТАЕТ:
+  `openssl x509 -inform DER` на нём даёт `No supported data to decode`.
+  Достаточно проверить, что файл разбирается как сертификат, и подклеить как
+  есть.
 - **Рабочий бандл:** корень + этот Sub CA дают `ssl_verify_result=0` и
   `openssl verify` → OK.
 
 | файл | источник | sha256 |
 |---|---|---|
 | `russian_trusted_root_ca_pem.crt` | `https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt` | `936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504` |
-| `subca_ssl_rsa2024.crt` (DER) | `http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt` | `6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e` |
+| `subca_ssl_rsa2024.crt` (PEM) | `http://nuc-cdp.voskhod.ru/cdp/subca_ssl_rsa2024.crt` | `6f9d829c8e6712444fce3624658d8788672849c5d5b7b53fd9cf7e83eac4193e` |
 
 **Предположения, НЕ проверенные (пометить как таковые и в коде, и в доке):**
 
@@ -76,7 +81,7 @@ Go зови ТОЛЬКО через `scripts/upstream-go.sh` (офлайн-кэ�
 
 ### 2. `scripts/nuc-ca-bundle.sh`
 
-Собирает PEM-бандл: корень + издающий Sub CA (DER → PEM).
+Собирает PEM-бандл: корень + издающий Sub CA (оба уже PEM, см. выше).
 
 - пины sha256 обоих файлов заданы в скрипте; несовпадение — отказ с
   ненулевым кодом и внятным сообщением, файл назначения НЕ создаётся и НЕ
